@@ -1,8 +1,5 @@
 # -*- coding: utf-8 -*-
 import configparser
-from pathlib import Path
-
-CONFIG_FILE_NAME = "config.ini"
 
 class ConfigManager:
     """
