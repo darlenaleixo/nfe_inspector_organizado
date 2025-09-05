@@ -1,40 +1,55 @@
 # -*- coding: utf-8 -*-
+import os
 import configparser
+from pathlib import Path
+
+CONFIG_FILE_NAME = "config.ini"
+
 
 class ConfigManager:
     """
-    Gerencia as configurações do aplicativo salvas no arquivo config.ini.
+    Gerencia o ficheiro de configuração (config.ini) para a aplicação.
     """
-    def __init__(self):
-        self.config_path = Path(CONFIG_FILE_NAME)
+    def __init__(self, config_file='config.ini'):
+        self.config_file = config_file
         self.config = configparser.ConfigParser()
-        self._load_or_create_default()
+        if not os.path.exists(self.config_file):
+            self._create_default_config()
+        self.config.read(self.config_file, encoding='utf-8')
 
-    def _load_or_create_default(self):
-        """Carrega o arquivo de configuração ou cria um com valores padrão se não existir."""
-        if not self.config_path.exists():
-            self.config['PADRAO'] = {
-                'pasta_xml': '',
-                'pasta_saida': './relatorios_nfe'
-            }
-            self.save()
-        else:
-            self.config.read(self.config_path, encoding='utf-8')
+    def _create_default_config(self):
+        """Cria uma estrutura de configuração padrão."""
+        self.config['PADRAO'] = {
+            'pasta_xml': '',
+            'pasta_saida': os.path.join(os.getcwd(), 'relatorios_nfe')
+        }
+        self.config['SEFAZ'] = {
+            'caminho_certificado_a1': '',
+            'uf': 'RJ',
+            'ambiente': '1',
+            'verificar_ssl': 'true' # <-- NOVA OPÇÃO
+        }
+        self.save()
 
-    def get(self, section: str, option: str, fallback: str = "") -> str:
-        """Obtém um valor de configuração de forma segura."""
-        return self.config.get(section, option, fallback=fallback)
+    def get(self, section, key, fallback=''):
+        """Obtém um valor do ficheiro de configuração."""
+        return self.config.get(section, key, fallback=fallback)
 
-    def set(self, section: str, option: str, value: str):
-        """Define um valor de configuração."""
+    def getboolean(self, section, key, fallback=False):
+        """Obtém um valor booleano do ficheiro de configuração."""
+        return self.config.getboolean(section, key, fallback=fallback)
+
+    def set(self, section, key, value):
+        """Define um valor no ficheiro de configuração."""
         if not self.config.has_section(section):
             self.config.add_section(section)
-        self.config.set(section, option, str(value))
+        self.config.set(section, key, str(value))
 
     def save(self):
-        """Salva as configurações atuais no arquivo .ini."""
-        with open(self.config_path, 'w', encoding='utf-8') as f:
+        """Salva as configurações atuais no ficheiro .ini."""
+        with open(self.config_file, 'w', encoding='utf-8') as f:
             self.config.write(f)
 
-# Cria uma instância única para ser usada em todo o projeto
+# Instância única para ser usada em todo o projeto
 config_manager = ConfigManager()
+
