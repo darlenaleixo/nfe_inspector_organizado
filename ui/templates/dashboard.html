@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard de Análise NFe</title>
+    
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f8f9fa; margin: 0; padding: 20px; color: #212529; }
+        .container { max-width: 1400px; margin: auto; background: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h1 { text-align: center; color: #0056b3; border-bottom: 2px solid #dee2e6; padding-bottom: 15px; margin-bottom: 30px; }
+        h2 { 
+            text-align: center; 
+            color: #0056b3; 
+            border-bottom: 2px solid #dee2e6; 
+            padding-bottom: 15px; 
+            margin-bottom: 20px;
+            margin-top: 0;
+        }
+        .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-bottom: 40px; }
+        .card { background: linear-gradient(135deg, #007bff, #0056b3); color: white; padding: 25px; border-radius: 8px; text-align: center; }
+        .card.invalido { background: linear-gradient(135deg, #dc3545, #a71d2a); }
+        .card h3 { margin-top: 0; font-weight: 400; font-size: 1.2em; }
+        .card .valor { font-size: 2.5em; margin: 10px 0 0; font-weight: 700; }
+        
+        .charts-grid { 
+            display: grid; 
+            grid-template-columns: 1fr;
+            gap: 40px;
+        }
+        .chart-wrapper {
+            margin-top: 40px;
+        }
+        .chart-container { 
+            position: relative; 
+            height: 35vh;
+            width: 100%; 
+        }
+        
+        .pagamentos-section {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 40px;
+        }
+        .pagamentos-chart {
+            flex: 1;
+            min-width: 300px;
+            height: 40vh;
+        }
+        .pagamentos-details {
+            flex: 1.2;
+            min-width: 300px;
+        }
+        .pagamentos-details table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .pagamentos-details th, .pagamentos-details td {
+            text-align: left;
+            padding: 8px;
+            border-bottom: 1px solid #dee2e6;
+        }
+        .pagamentos-details th {
+            color: #0056b3;
+        }
+        
+        .alerta-faltantes { background-color: #fff3cd; color: #856404; padding: 15px; border: 1px solid #ffeeba; border-radius: 8px; margin-bottom: 30px; }
+        
+        .table-section { 
+            margin-top: 50px;
+        }
+        #tabela-dados_wrapper { margin-top: 20px; }
+        .dataTables_filter { margin-bottom: 15px; }
+        table.dataTable { width: 100% !important; border-collapse: collapse !important; }
+        table.dataTable th, table.dataTable td { padding: 10px; }
+    </style>
+
+    <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/1.11.5/css/jquery.dataTables.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Dashboard Interativo de Análise NFe</h1>
+        
+        <div class="cards">
+            <div class="card"><h3 >Total de Vendas</h3><p class="valor" id="total-vendas">...</p></div>
+            <div class="card"><h3>Notas Processadas</h3><p class="valor" id="notas-processadas">...</p></div>
+            <div class="card"><h3>Notas Canceladas</h3><p class="valor" id="notas-canceladas">...</p></div>
+            <div class="card invalido"><h3>Arquivos Inválidos</h3><p class="valor" id="arquivos-invalidos">...</p></div>
+        </div>
+
+        <div id="container-alerta-faltantes"></div>
+
+        <div class="charts-grid">
+            <div class="chart-wrapper">
+                <h2>Formas de Pagamento</h2>
+                <div class="pagamentos-section">
+                    <div class="pagamentos-chart">
+                        <canvas id="grafico-pagamentos"></canvas>
+                    </div>
+                    <div class="pagamentos-details">
+                        <table id="tabela-pagamentos">
+                            <thead>
+                                <tr>
+                                    <th>Forma de Pagamento</th>
+                                    <th>Valor Total</th>
+                                    <th>Percentual</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            <div class="chart-wrapper">
+                <h2>Top 10 CFOPs</h2>
+                <div class="chart-container">
+                    <canvas id="grafico-cfops"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <div class="table-section">
+            <h2>Dados Detalhados</h2>
+            <table id="tabela-dados" class="display" style="width:100%"></table>
+        </div>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.datatables.net/1.11.5/js/jquery.dataTables.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <script>
+        function formatarMoeda(v) { return parseFloat(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }); }
+
+        function criarGrafico(ctx, type, labels, data, title, label) {
+            if (!data || data.length === 0) {
+                ctx.font = "16px Arial";
+                ctx.textAlign = "center";
+                ctx.fillText(`Nenhum dado para "${title}"`, ctx.canvas.width / 2, ctx.canvas.height / 2);
+                return;
+            }
+            let chartOptions = { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: type !== 'pie' }, title: { display: false } } };
+            if (type === 'bar') { chartOptions.indexAxis = 'y'; chartOptions.scales = { x: { beginAtZero: true } }; }
+            new Chart(ctx, { type: type, data: { labels: labels, datasets: [{ label: label, data: data, backgroundColor: ['#0d6efd', '#dc3545', '#198754', '#ffc107', '#6f42c1', '#fd7e14'], borderColor: '#fff', borderWidth: 2 }] }, options: chartOptions });
+        }
+
+        function renderizarAlertaFaltantes(notasFaltantes) {
+            const container = $('#container-alerta-faltantes');
+            container.empty();
+            if (notasFaltantes && Object.keys(notasFaltantes).length > 0) {
+                let html = '<div class="alerta-faltantes"><h3>Alerta: Notas Faltantes</h3><ul>';
+                for (const grupo in notasFaltantes) { html += `<li><strong>${grupo}:</strong> ${notasFaltantes[grupo].join(', ')}</li>`; }
+                html += '</ul></div>';
+                container.html(html);
+            }
+        }
+
+        function renderizarDetalhesPagamento(dadosPagamentos) {
+            const tabelaBody = $('#tabela-pagamentos tbody');
+            tabelaBody.empty();
+            if (!dadosPagamentos || Object.keys(dadosPagamentos).length === 0) {
+                tabelaBody.html('<tr><td colspan="3">Nenhum dado de pagamento.</td></tr>');
+                return;
+            }
+            const totalPagamentos = Object.values(dadosPagamentos).reduce((soma, valor) => soma + valor, 0);
+            for (const [forma, valor] of Object.entries(dadosPagamentos)) {
+                const percentual = (valor / totalPagamentos) * 100;
+                tabelaBody.append(`<tr><td>${forma}</td><td>${formatarMoeda(valor)}</td><td>${percentual.toFixed(2)}%</td></tr>`);
+            }
+        }
+
+        $(document).ready(function() {
+            $.getJSON('/api/resumos', function(data) {
+                const resumos = data.resumos || {};
+                const estatisticas = data.estatisticas || {};
+                $('#total-vendas').text(formatarMoeda(resumos.total_vendas));
+                $('#notas-processadas').text(estatisticas.notas_processadas_sucesso || 0);
+                $('#notas-canceladas').text(estatisticas.notas_canceladas || 0);
+                $('#arquivos-invalidos').text(estatisticas.arquivos_invalidos_xsd || 0);
+                renderizarAlertaFaltantes(resumos.notas_faltantes);
+                criarGrafico($('#grafico-pagamentos').get(0).getContext('2d'), 'pie', Object.keys(resumos.formas_pagamento || {}), Object.values(resumos.formas_pagamento || {}), 'Formas de Pagamento', 'Valor por Forma de Pagamento');
+                renderizarDetalhesPagamento(resumos.formas_pagamento);
+                criarGrafico($('#grafico-cfops').get(0).getContext('2d'), 'bar', Object.keys(resumos.top_cfops || {}), Object.values(resumos.top_cfops || {}), 'Top 10 CFOPs', 'Quantidade');
+            });
+
+            $('#tabela-dados').DataTable({
+                "processing": true, "serverSide": true, "ajax": "/api/dados",
+                "scrollX": true, // Permite rolagem horizontal se as colunas não couberem
+                "columns": [
+                    { "data": "status", "title": "Status", "defaultContent": "" },
+                    { "data": "numero_nf", "title": "Nº NF", "defaultContent": "" },
+                    { "data": "emit_nome", "title": "Emitente", "defaultContent": "" },
+                    { "data": "item_descricao", "title": "Produto", "defaultContent": "" },
+                    { "data": "item_valor_total", "title": "Vlr. Item", "render": formatarMoeda, "defaultContent": "R$ 0,00" },
+                    // --- NOVAS COLUNAS DE IMPOSTOS ---
+                    { "data": "icms_vicms", "title": "Vlr. ICMS", "render": formatarMoeda, "defaultContent": "" },
+                    { "data": "icms_vicmsst", "title": "Vlr. ICMS-ST", "render": formatarMoeda, "defaultContent": "" },
+                    { "data": "ipi_vipi", "title": "Vlr. IPI", "render": formatarMoeda, "defaultContent": "" },
+                    { "data": "pis_vpis", "title": "Vlr. PIS", "render": formatarMoeda, "defaultContent": "" },
+                    { "data": "cofins_vcofins", "title": "Vlr. COFINS", "render": formatarMoeda, "defaultContent": "" }
+                ],
+                "language": { "url": "//cdn.datatables.net/plug-ins/1.11.5/i18n/pt-BR.json" },
+                "pageLength": 10
+            });
+        });
+    </script>
+</body>
+</html>
