@@ -8,20 +8,15 @@ from requests.adapters import HTTPAdapter
 import certifi
 from zeep import Client, Settings, Transport
 from zeep.exceptions import Fault
-
-from .auth import CertificateManager
 from core.config import config_manager
 
 # --- Adaptador de Conexão Customizado ---
 class TlsHttpAdapter(HTTPAdapter):
-    """Adaptador para forçar o uso do protocolo TLS (>=1.2)."""
+    """Adaptador para forçar o uso de TLS >=1.2."""
     def init_poolmanager(self, connections, maxsize, block=False, **pool_kwargs):
         # Contexto de CLIENTE
         ssl_context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-
-        # Garante no mínimo TLS 1.2 (SEFAZ não aceita <1.2)
-        ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
-        # Não fixamos o máximo → servidor pode usar TLS 1.2 ou 1.3
+        ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2  # mínimo TLS 1.2
 
         from urllib3.poolmanager import PoolManager
         self.poolmanager = PoolManager(
@@ -42,11 +37,11 @@ ENDPOINTS = {
 
 class SefazClient:
     """Cliente para consulta de NFe nos webservices da SEFAZ."""
-    def __init__(self, cert_path: str, cert_pass: str):
+    def __init__(self, cert_pem: str, key_pem: str):
         self.uf = config_manager.get('SEFAZ', 'uf', 'RJ')
-        self.ambiente = 'producao' if config_manager.get('SEFAZ', 'ambiente') == '1' else 'homologacao'
-        self.cert_path = cert_path
-        self.cert_pass = cert_pass
+        self.ambiente = 'producao' if config_manager.get('SEFAZ', 'ambiente') == '1' else 'producao'
+        self.cert_pem = cert_pem
+        self.key_pem = key_pem
         self.wsdl = ENDPOINTS.get(self.uf, {}).get(self.ambiente)
         self.verificar_ssl = config_manager.getboolean('SEFAZ', 'verificar_ssl', fallback=True)
         
@@ -57,16 +52,14 @@ class SefazClient:
         """Consulta o status de uma única chave de acesso na SEFAZ."""
         if len(chave_acesso) != 44 or not chave_acesso.isdigit():
             return {'status': 'Erro', 'motivo': 'Chave de acesso inválida'}
-            
-        cert_manager = CertificateManager(self.cert_path, self.cert_pass)
+        
         
         try:
-            cert_manager.load_and_prepare_files()
-
+        
             session = Session()
-            session.cert = (cert_manager.cert_file, cert_manager.key_file)
+            session.cert = (self.cert_pem, self.key_pem)
             
-            # Monta o adaptador TLS na sessão
+            # Monta o adaptador TLS
             session.mount("https://", TlsHttpAdapter())
             
             if self.verificar_ssl:
@@ -105,8 +98,7 @@ class SefazClient:
         except Exception as e:
             logging.error(f"Erro inesperado na consulta à SEFAZ: {e}", exc_info=True)
             return {'status': 'Erro Inesperado', 'motivo': str(e)}
-        finally:
-            cert_manager.cleanup()
+
 
     def _parse_response(self, response: etree.Element) -> dict:
         """Interpreta a resposta XML da SEFAZ."""
