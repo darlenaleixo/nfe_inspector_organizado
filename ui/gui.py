@@ -103,7 +103,7 @@ def iniciar_gui():
 
         try:
             messagebox.showinfo("Consultando...", "A contactar a SEFAZ. Por favor, aguarde...", parent=root)
-            client = SefazClient(cert_path=caminho_certificado, cert_pass=senha_certificado)
+            client = SefazClient(certificado_path=caminho_certificado, senha_certificado=senha_certificado)
             resultado = client.consultar_chave(chave)
             
             resultado_formatado = "\n".join([f"{key.replace('_', ' ').title()}: {value}" for key, value in resultado.items()])

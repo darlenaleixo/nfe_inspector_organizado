@@ -1,59 +1,73 @@
+# sefaz_integration/auth.py
 # -*- coding: utf-8 -*-
+
 import os
 import ssl
 import tempfile
-from cryptography.hazmat.primitives.serialization import pkcs12
-from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption
-import logging
+from typing import Tuple
+from cryptography.hazmat.primitives.serialization import pkcs12, Encoding, PrivateFormat, NoEncryption
+from cryptography.hazmat.primitives import serialization
+from .exceptions import CertificateError
 
 class CertificateManager:
-    """Gerencia o carregamento e o uso de certificados digitais A1."""
+    """
+    Gerencia a extração de certificado digital (.pfx/.p12) para uso em requisições HTTPS.
+    """
     def __init__(self, pfx_path: str, password: str):
-        if not os.path.exists(pfx_path):
-            raise FileNotFoundError(f"Arquivo de certificado não encontrado em: {pfx_path}")
-        self.pfx_path = pfx_path
-        self.password = password.encode('utf-8')
-        self.cert_file = None
-        self.key_file = None
+            self.pfx_path = pfx_path
+            self.password = password
+            self._cert_file = None
+            self._key_file = None
 
-    def load_and_prepare_files(self) -> ssl.SSLContext:
+    def get_cert_files(self) -> Tuple[str, str]:
         """
-        Carrega o arquivo PFX, extrai a chave e o certificado,
-        e os salva em arquivos temporários para uso pelo Zeep.
+        Extrai o certificado e a chave privada do PFX e retorna os paths de .pem.
         """
+        if self._cert_file and self._key_file:
+            return self._cert_file, self._key_file
+
         try:
+            # Carrega dados PKCS#12
             with open(self.pfx_path, 'rb') as f:
                 pfx_data = f.read()
-            
-            private_key, certificate, _ = pkcs12.load_key_and_certificates(
-                pfx_data, self.password
+                private_key, certificate, _ = pkcs12.load_key_and_certificates(
+                pfx_data,
+                self.password.encode('utf-8')
             )
+            # Cria arquivos temporários
+            cert_tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.pem')
+            key_tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.pem')
 
-            # Salva a chave privada em um arquivo temporário
-            with tempfile.NamedTemporaryFile(delete=False, mode='wb', suffix='.key') as key_temp:
-                self.key_file = key_temp.name
-                key_temp.write(private_key.private_bytes(
-                    Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()
-                ))
+            # Escreve certificado
+            cert_pem = certificate.public_bytes(Encoding.PEM)
+            cert_tmp.write(cert_pem)
+            cert_tmp.close()
 
-            # Salva o certificado em um arquivo temporário
-            with tempfile.NamedTemporaryFile(delete=False, mode='wb', suffix='.crt') as cert_temp:
-                self.cert_file = cert_temp.name
-                cert_temp.write(certificate.public_bytes(Encoding.PEM))
+            # Escreve chave privada
+            key_pem = private_key.private_bytes(
+                encoding=Encoding.PEM,
+                format=PrivateFormat.PKCS8,
+                encryption_algorithm=NoEncryption()
+            )
+            key_tmp.write(key_pem)
+            key_tmp.close()
 
-            # Cria o contexto SSL para a requisição
-            context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-            context.load_cert_chain(certfile=self.cert_file, keyfile=self.key_file)
-            return context
+            # Armazena para chamadas futuras
+            self._cert_file = cert_tmp.name
+            self._key_file = key_tmp.name
+
+            return self._cert_file, self._key_file
 
         except Exception as e:
-            logging.error(f"Erro ao carregar o certificado: {e}")
-            self.cleanup()
-            raise
+            raise CertificateError(f"Falha ao extrair certificado: {e}")
 
     def cleanup(self):
-        """Remove os arquivos temporários de chave e certificado."""
-        if self.cert_file and os.path.exists(self.cert_file):
-            os.remove(self.cert_file)
-        if self.key_file and os.path.exists(self.key_file):
-            os.remove(self.key_file)
+        """
+        Remove os arquivos temporários gerados.
+        """
+        for path in (self._cert_file, self._key_file):
+            try:
+                if path and os.path.exists(path):
+                    os.unlink(path)
+            except OSError:
+                pass

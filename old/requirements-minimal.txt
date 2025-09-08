@@ -1,0 +1,14 @@
+# Core para NFe (sem criptografia)
+pandas==1.5.3
+numpy==1.24.3
+lxml==4.9.2
+requests==2.28.2
+Flask==2.2.5
+openpyxl==3.1.2
+matplotlib==3.7.1
+xmlschema==2.3.1
+Pillow==9.5.0
+python-dateutil==2.8.2
+
+# Para validação XML
+xmltodict==0.13.0
