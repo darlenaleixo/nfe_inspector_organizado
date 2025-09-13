@@ -10,6 +10,8 @@ from cert.notifier import start_scheduler
 from reforma_tributaria.config import ConfigReformaTributaria
 from reforma_tributaria.calculadora import CalculadoraReformaTributaria
 from reforma_tributaria.validadores import ValidadorReformaTributaria
+from ia_fiscal.sugestor_tributario import SugestorTributario
+
 
 # NOVO: Imports da IA Fiscal
 from ia_fiscal.analisador_riscos import AnalisadorRiscos
@@ -203,6 +205,30 @@ def executar_teste_ia_fiscal(analisador, detector):
         print("   ✅ Nenhuma inconsistência detectada")
     
     print("\n✅ Teste de IA Fiscal concluído!")
+
+def inicializar_ia_fiscal():
+    """Inicializa módulos de IA Fiscal"""
+    try:
+        logging.info("Inicializando módulos de IA Fiscal...")
+        
+        analisador = AnalisadorRiscos()
+        detector = DetectorFraudes()
+        sugestor = SugestorTributario()  # NOVO
+        
+        logging.info("✅ Analisador de Riscos: OK")
+        logging.info("✅ Detector de Fraudes: OK") 
+        logging.info("✅ Sugestor Tributário: OK")  # NOVO
+        logging.info("✅ Módulos de IA Fiscal inicializados com sucesso")
+        
+        return analisador, detector, sugestor  # NOVO
+        
+    except Exception as e:
+        logging.error(f"❌ Erro ao inicializar IA Fiscal: {e}")
+        logging.error(f"Módulos de IA não estarão disponíveis")
+        return None, None, None  # NOVO
+    
+analisador_riscos, detector_fraudes, sugestor_tributario = inicializar_ia_fiscal()
+
 
 def main():
     """Função principal que gerencia a execução do programa via CLI ou GUI."""
