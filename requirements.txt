@@ -59,3 +59,10 @@ Werkzeug==3.1.3
 xmlschema==4.1.0
 xmltodict==0.14.2
 zeep==4.3.1
+pytest
+pytest-cov
+responses        # para simular HTTP/SOAP
+freezegun        # para congelar datas, se precisar
+cryptography
+pyOpenSSL
+apscheduler

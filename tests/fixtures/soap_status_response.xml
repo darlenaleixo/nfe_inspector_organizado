@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <nfeStatusServicoNFResponse xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeStatusServico4">
+      <nfeStatusServicoNFResult>
+        <![CDATA[
+        <retConsStatServ xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
+          <tpAmb>2</tpAmb>
+          <verAplic>SVRS20250908</verAplic>
+          <cStat>107</cStat>
+          <xMotivo>Servico em operacao</xMotivo>
+          <cUF>33</cUF>
+          <dhRecbto>2025-09-09T00:00:00-03:00</dhRecbto>
+        </retConsStatServ>
+        ]]>
+      </nfeStatusServicoNFResult>
+    </nfeStatusServicoNFResponse>
+  </soap:Body>
+</soap:Envelope>

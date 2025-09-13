@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk, simpledialog
 import threading
@@ -9,19 +10,44 @@ import os
 from processing.processor import NFeProcessor
 from core.config import config_manager
 from sefaz_integration.client import SefazClient
+from ui.config_reforma import JanelaConfigReforma
 
 def iniciar_gui():
     """Inicia a interface gráfica (GUI) para seleção de pastas e processamento."""
     root = tk.Tk()
     root.title("Analisador de NFe/NFCe")
-    root.geometry("600x550") # Aumenta a altura para os novos campos
+    root.geometry("600x550")  # Aumenta a altura para os novos campos
     root.minsize(500, 500)
+
+    # CONFIGURAR MENU
+    menu_bar = tk.Menu(root)
+    root.config(menu=menu_bar)
+
+    menu_gerenciar = tk.Menu(menu_bar, tearoff=0)
+    menu_bar.add_cascade(label="Gerenciar", menu=menu_gerenciar)
+
+    # Itens do menu (funções placeholder por enquanto)
+    menu_gerenciar.add_command(
+        label="Estoque de Produtos", 
+        command=lambda: messagebox.showinfo("Em Desenvolvimento", "Funcionalidade em desenvolvimento")
+    )
+    menu_gerenciar.add_command(
+        label="Formas de Pagamento", 
+        command=lambda: messagebox.showinfo("Em Desenvolvimento", "Funcionalidade em desenvolvimento")
+    )
+
+    # Separator e configuração da Reforma
+    menu_gerenciar.add_separator()
+    menu_gerenciar.add_command(
+        label="Configuração Reforma Tributária",
+        command=lambda: JanelaConfigReforma(root)
+    )
 
     # --- Variáveis de Estado ---
     xml_folder = tk.StringVar(value=config_manager.get('PADRAO', 'pasta_xml'))
     output_folder = tk.StringVar(value=config_manager.get('PADRAO', 'pasta_saida'))
     cert_path = tk.StringVar(value=config_manager.get('SEFAZ', 'caminho_certificado_a1'))
-    cert_pass = tk.StringVar() # Senha nunca é guardada
+    cert_pass = tk.StringVar()  # Senha nunca é guardada
     processor_instance = None
 
     # --- Funções ---
@@ -44,7 +70,7 @@ def iniciar_gui():
         if not xml_folder.get() or not output_folder.get():
             messagebox.showwarning("Atenção", "Por favor, selecione a pasta de XMLs e a pasta de saída.")
             return
-        
+
         config_manager.set('PADRAO', 'pasta_xml', xml_folder.get())
         config_manager.set('PADRAO', 'pasta_saida', output_folder.get())
         config_manager.set('SEFAZ', 'caminho_certificado_a1', cert_path.get())
@@ -60,7 +86,7 @@ def iniciar_gui():
             processor_instance.processar_pasta()
             processor_instance.calcular_resumos()
             processor_instance.gerar_relatorios()
-            
+
             log_text.config(state=tk.NORMAL)
             log_text.delete(1.0, tk.END)
             log_text.insert(tk.END, "--- Processamento Concluído ---\n\n")
@@ -75,6 +101,7 @@ def iniciar_gui():
         except Exception as e:
             messagebox.showerror("Erro", f"Ocorreu um erro: {e}")
             logging.error(f"Erro no processamento: {e}", exc_info=True)
+
         finally:
             progress_bar.stop()
             btn_processar.config(state=tk.NORMAL)
@@ -93,10 +120,11 @@ def iniciar_gui():
         # Validações antes de iniciar
         caminho_certificado = cert_path.get()
         senha_certificado = cert_pass.get()
-        
+
         if not caminho_certificado or not os.path.exists(caminho_certificado):
             messagebox.showerror("Erro de Configuração", "O caminho para o certificado digital é inválido ou não foi preenchido.")
             return
+
         if not senha_certificado:
             messagebox.showerror("Erro de Configuração", "A senha do certificado digital é obrigatória.")
             return
@@ -105,7 +133,6 @@ def iniciar_gui():
             messagebox.showinfo("Consultando...", "A contactar a SEFAZ. Por favor, aguarde...", parent=root)
             client = SefazClient(certificado_path=caminho_certificado, senha_certificado=senha_certificado)
             resultado = client.consultar_chave(chave)
-            
             resultado_formatado = "\n".join([f"{key.replace('_', ' ').title()}: {value}" for key, value in resultado.items()])
             messagebox.showinfo("Resultado da Consulta SEFAZ", resultado_formatado)
 
@@ -128,23 +155,25 @@ def iniciar_gui():
     # Frame de Pastas
     folder_frame = ttk.LabelFrame(main_frame, text="Configuração de Pastas", padding="10")
     folder_frame.pack(fill=tk.X, pady=(0, 10))
-    # ... (código dos campos de pasta sem alteração) ...
+
     ttk.Label(folder_frame, text="Pasta dos XMLs:").grid(row=0, column=0, sticky=tk.W, pady=2)
     ttk.Entry(folder_frame, textvariable=xml_folder).grid(row=0, column=1, sticky=tk.EW, padx=5)
     ttk.Button(folder_frame, text="Selecionar...", command=lambda: select_folder(xml_folder, "Selecione a pasta com os XMLs")).grid(row=0, column=2)
+
     ttk.Label(folder_frame, text="Pasta de Saída:").grid(row=1, column=0, sticky=tk.W, pady=2)
     ttk.Entry(folder_frame, textvariable=output_folder).grid(row=1, column=1, sticky=tk.EW, padx=5)
     ttk.Button(folder_frame, text="Selecionar...", command=lambda: select_folder(output_folder, "Selecione a pasta para salvar os relatórios")).grid(row=1, column=2)
+
     folder_frame.columnconfigure(1, weight=1)
 
-    # --- NOVA SECÇÃO PARA O CERTIFICADO ---
+    # --- SEÇÃO PARA O CERTIFICADO ---
     sefaz_frame = ttk.LabelFrame(main_frame, text="Configuração SEFAZ", padding="10")
     sefaz_frame.pack(fill=tk.X, pady=10)
 
     ttk.Label(sefaz_frame, text="Certificado A1 (.pfx):").grid(row=0, column=0, sticky=tk.W, pady=2)
     ttk.Entry(sefaz_frame, textvariable=cert_path).grid(row=0, column=1, sticky=tk.EW, padx=5)
     ttk.Button(sefaz_frame, text="Selecionar...", command=select_cert_file).grid(row=0, column=2)
-    
+
     ttk.Label(sefaz_frame, text="Senha do Certificado:").grid(row=1, column=0, sticky=tk.W, pady=2)
     ttk.Entry(sefaz_frame, textvariable=cert_pass, show="*").grid(row=1, column=1, columnspan=2, sticky=tk.EW, padx=5)
 
@@ -153,11 +182,13 @@ def iniciar_gui():
     # Botões de Ação
     action_frame = ttk.Frame(main_frame)
     action_frame.pack(fill=tk.X, pady=10)
+
     btn_processar = ttk.Button(action_frame, text="▶ Iniciar Processamento", command=run_processing, style="Accent.TButton")
     btn_processar.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 5))
+
     btn_dashboard = ttk.Button(action_frame, text="🚀 Abrir Dashboard Web", state=tk.DISABLED, command=open_dashboard)
     btn_dashboard.pack(side=tk.RIGHT, expand=True, fill=tk.X, padx=(5, 0))
-    
+
     btn_consultar_sefaz = ttk.Button(main_frame, text="🔍 Consultar Chave na SEFAZ", command=consultar_sefaz)
     btn_consultar_sefaz.pack(fill=tk.X, pady=5)
 
@@ -166,6 +197,7 @@ def iniciar_gui():
 
     log_frame = ttk.LabelFrame(main_frame, text="Resultados do Processamento", padding="10")
     log_frame.pack(fill=tk.BOTH, expand=True)
+
     log_text = tk.Text(log_frame, height=5, state=tk.DISABLED, bg="#f0f0f0", relief=tk.SUNKEN, borderwidth=1)
     log_text.pack(fill=tk.BOTH, expand=True)
 
@@ -173,4 +205,3 @@ def iniciar_gui():
     style.configure("Accent.TButton", foreground="white", background="#0078d4")
 
     root.mainloop()
-

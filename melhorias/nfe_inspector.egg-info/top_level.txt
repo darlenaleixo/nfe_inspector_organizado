@@ -1,0 +1,6 @@
+core
+processing
+reports
+sefaz_integration
+tests
+ui

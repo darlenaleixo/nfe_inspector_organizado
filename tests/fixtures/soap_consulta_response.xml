@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <nfeConsultaNFResponse xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeConsulta4">
+      <nfeConsultaNFResult>
+        <![CDATA[
+        <retConsSitNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
+          <tpAmb>2</tpAmb>
+          <verAplic>SVRS20250908</verAplic>
+          <cStat>100</cStat>
+          <xMotivo>Autorizado o uso da NF-e</xMotivo>
+          <cUF>33</cUF>
+          <dhRecbto>2025-09-09T00:00:00-03:00</dhRecbto>
+          <infRec>
+            <nRec>123456789012345</nRec>
+            <tMed>1</tMed>
+          </infRec>
+        </retConsSitNFe>
+        ]]>
+      </nfeConsultaNFResult>
+    </nfeConsultaNFResponse>
+  </soap:Body>
+</soap:Envelope>

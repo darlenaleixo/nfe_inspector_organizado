@@ -29,7 +29,4 @@ def test_ssl_connection():
         return False
 
 if __name__ == "__main__":
-    if test_ssl_connection():
-        print("🎉 Teste SSL PASSOU com CA customizado!")
-    else:
-        print("❌ Teste SSL FALHOU.")
+    assert test_ssl_connection() is True
