@@ -222,10 +222,11 @@ class DatabaseManager:
             raise
     
     def inserir_empresa(self, empresa: Empresa) -> int:
-        """Insere uma empresa e retorna o ID"""
+        """Insere empresa se não existir; retorna o ID sempre."""
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
+                # Insere apenas se não existir
                 cursor.execute("""
                     INSERT OR IGNORE INTO empresas 
                     (cnpj, razao_social, nome_fantasia, uf, criado_em)
@@ -238,8 +239,7 @@ class DatabaseManager:
                 # Busca o ID da empresa (existente ou recém-criada)
                 cursor.execute("SELECT id FROM empresas WHERE cnpj = ?", (empresa.cnpj,))
                 result = cursor.fetchone()
-                return result[0] if result else None
-                
+                return result[0]
         except sqlite3.Error as e:
             logging.error(f"❌ Erro ao inserir empresa: {e}")
             return None
@@ -315,19 +315,20 @@ class DatabaseManager:
                 if filtros:
                     if 'data_inicio' in filtros and filtros['data_inicio']:
                         query += " AND nf.data_emissao >= ?"
-                        parametros.append(filtros['data_inicio'])
-                    
+                        parametros.append(filtros['data_inicio'] + " 00:00:00")
+
                     if 'data_fim' in filtros and filtros['data_fim']:
                         query += " AND nf.data_emissao <= ?"
-                        parametros.append(filtros['data_fim'])
+                        parametros.append(filtros['data_fim'] + " 23:59:59")
                     
                     if 'status_sefaz' in filtros and filtros['status_sefaz']:
                         query += " AND nf.status_sefaz = ?"
                         parametros.append(filtros['status_sefaz'])
                     
                     if 'forma_pagamento' in filtros and filtros['forma_pagamento']:
-                        query += " AND nf.forma_pagamento = ?"
-                        parametros.append(filtros['forma_pagamento'])
+                        query += " AND LOWER(nf.forma_pagamento) LIKE ?"
+                        parametros.append(f"%{filtros['forma_pagamento'].lower()}%")
+
                     
                     if 'empresa_id' in filtros and filtros['empresa_id']:
                         query += " AND nf.empresa_id = ?"

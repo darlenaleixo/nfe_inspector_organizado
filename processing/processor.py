@@ -6,6 +6,7 @@ import hashlib
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 import logging
+import sqlite3
 from database.models import DatabaseManager, Empresa, NotaFiscal, ItemNotaFiscal
 
 # Importa módulos já existentes
@@ -162,7 +163,7 @@ class NFeProcessorBI:
             return False
     
     def _parse_xml_nfe(self, caminho_arquivo: str) -> Optional[Dict[str, Any]]:
-        """Faz parse do XML da NFe"""
+        """Faz parse do XML da NFe - VERSÃO CORRIGIDA"""
         
         try:
             tree = ET.parse(caminho_arquivo)
@@ -185,23 +186,41 @@ class NFeProcessorBI:
             dest = inf_nfe.find('dest')
             total = inf_nfe.find('total')
             
+            if not emit:
+                logging.error("Dados do emissor não encontrados")
+                return None
+            
+            # Extração melhorada dos dados do emissor
+            cnpj_emit = emit.find('CNPJ')
+            nome_emit = emit.find('xNome')
+            fantasia_emit = emit.find('xFant')
+            endereco_emit = emit.find('enderEmit')
+            
+            empresa_dados = {
+                'cnpj': cnpj_emit.text.strip() if cnpj_emit is not None else '',
+                'razao_social': nome_emit.text.strip() if nome_emit is not None else 'Nome não informado',
+                'nome_fantasia': fantasia_emit.text.strip() if fantasia_emit is not None else '',
+                'uf': endereco_emit.find('UF').text.strip() if endereco_emit and endereco_emit.find('UF') is not None else ''
+            }
+            
+            # Dados da NFe completos
             dados = {
                 'chave_acesso': inf_nfe.get('Id', '').replace('NFe', ''),
-                'numero': ide.find('nNF').text if ide.find('nNF') is not None else '',
-                'serie': ide.find('serie').text if ide.find('serie') is not None else '',
-                'data_emissao': self._converter_data_nfe(ide.find('dhEmi').text if ide.find('dhEmi') is not None else ''),
+                'numero': ide.find('nNF').text if ide and ide.find('nNF') is not None else '',
+                'serie': ide.find('serie').text if ide and ide.find('serie') is not None else '',
+                'data_emissao': self._converter_data_nfe(ide.find('dhEmi').text if ide and ide.find('dhEmi') is not None else ''),
                 
                 # Emissor
-                'cnpj_emissor': emit.find('CNPJ').text if emit.find('CNPJ') is not None else '',
-                'nome_emissor': emit.find('xNome').text if emit.find('xNome') is not None else '',
-                'uf_emissor': emit.find('enderEmit/UF').text if emit.find('enderEmit/UF') is not None else '',
+                'cnpj_emissor': empresa_dados['cnpj'],
+                'nome_emissor': empresa_dados['razao_social'],
+                'uf_emissor': empresa_dados['uf'],
                 
-                # Destinatário
-                'cnpj_destinatario': dest.find('CNPJ').text if dest and dest.find('CNPJ') is not None else (dest.find('CPF').text if dest and dest.find('CPF') is not None else ''),
+                # Destinatário (corrigido)
+                'cnpj_destinatario': self._extrair_documento_destinatario(dest),
                 'nome_destinatario': dest.find('xNome').text if dest and dest.find('xNome') is not None else '',
                 'uf_destinatario': dest.find('enderDest/UF').text if dest and dest.find('enderDest/UF') is not None else '',
                 
-                # Valores
+                # Valores (corrigidos)
                 'valor_produtos': float(total.find('ICMSTot/vProd').text) if total and total.find('ICMSTot/vProd') is not None else 0.0,
                 'valor_frete': float(total.find('ICMSTot/vFrete').text) if total and total.find('ICMSTot/vFrete') is not None else 0.0,
                 'valor_seguro': float(total.find('ICMSTot/vSeg').text) if total and total.find('ICMSTot/vSeg') is not None else 0.0,
@@ -212,19 +231,12 @@ class NFeProcessorBI:
                 'valor_pis': float(total.find('ICMSTot/vPIS').text) if total and total.find('ICMSTot/vPIS') is not None else 0.0,
                 'valor_cofins': float(total.find('ICMSTot/vCOFINS').text) if total and total.find('ICMSTot/vCOFINS') is not None else 0.0,
                 
-                # Status
+                # Status e pagamento
                 'status_sefaz': 'autorizada',  # Assume autorizada se chegou até aqui
+                'forma_pagamento': self._extrair_forma_pagamento(inf_nfe) or 'Não informado',
                 
-                # Pagamento (simplificado)
-                'forma_pagamento': self._extrair_forma_pagamento(inf_nfe),
-                
-                # Dados da empresa (para cadastro)
-                'empresa_dados': {
-                    'cnpj': emit.find('CNPJ').text if emit.find('CNPJ') is not None else '',
-                    'razao_social': emit.find('xNome').text if emit.find('xNome') is not None else '',
-                    'nome_fantasia': emit.find('xFant').text if emit.find('xFant') is not None else '',
-                    'uf': emit.find('enderEmit/UF').text if emit.find('enderEmit/UF') is not None else ''
-                },
+                # Dados da empresa para cadastro
+                'empresa_dados': empresa_dados,
                 
                 # Itens
                 'itens': self._extrair_itens(inf_nfe)
@@ -238,6 +250,21 @@ class NFeProcessorBI:
         except Exception as e:
             logging.error(f"Erro inesperado ao processar XML: {e}")
             return None
+
+    def _extrair_documento_destinatario(self, dest) -> str:
+        """Extrai documento do destinatário (CNPJ ou CPF)"""
+        if not dest:
+            return ''
+        
+        cnpj = dest.find('CNPJ')
+        if cnpj is not None:
+            return cnpj.text.strip()
+        
+        cpf = dest.find('CPF')
+        if cpf is not None:
+            return cpf.text.strip()
+        
+        return ''
     
     def _extrair_itens(self, inf_nfe) -> List[Dict[str, Any]]:
         """Extrai itens da NFe"""
@@ -328,32 +355,57 @@ class NFeProcessorBI:
             return {}
     
     def _processar_empresa(self, empresa_dados: Dict[str, Any]) -> Optional[int]:
-        """Cadastra ou busca empresa no banco"""
-        
+        """Cadastra ou busca empresa no banco, logando apenas na criação."""
         try:
-            if not empresa_dados.get('cnpj'):
+            cnpj_raw = empresa_dados.get('cnpj', '').strip()
+            if not cnpj_raw:
                 logging.error("CNPJ da empresa não informado")
                 return None
-            
-            empresa = Empresa(
-                cnpj=empresa_dados['cnpj'],
-                razao_social=empresa_dados['razao_social'],
-                nome_fantasia=empresa_dados.get('nome_fantasia', ''),
-                uf=empresa_dados.get('uf', '')
-            )
-            
-            empresa_id = self.db_manager.inserir_empresa(empresa)
-            if empresa_id:
-                self.estatisticas["empresas_cadastradas"] += 1
-            
+
+            # Limpa e formata CNPJ
+            cnpj_limpo = ''.join(filter(str.isdigit, cnpj_raw))
+            if len(cnpj_limpo) != 14:
+                logging.warning(f"CNPJ inválido: {cnpj_raw}")
+                return None
+
+            # Formata CNPJ: XX.XXX.XXX/XXXX-XX
+            cnpj_formatado = f"{cnpj_limpo[:2]}.{cnpj_limpo[2:5]}.{cnpj_limpo[5:8]}/" \
+                            f"{cnpj_limpo[8:12]}-{cnpj_limpo[12:14]}"
+
+            # Verifica se a empresa já existe
+            cursor = sqlite3.connect(self.db_manager.db_path).cursor()
+            cursor.execute("SELECT id, criado_em FROM empresas WHERE cnpj = ?", (cnpj_formatado,))
+            row = cursor.fetchone()
+
+            if row:
+                empresa_id, criado_em = row
+                logging.debug(f"Empresa já existe (ID: {empresa_id}, Cadastrada em {criado_em[:10]})")
+            else:
+                # Cria nova empresa
+                empresa = Empresa(
+                    cnpj=cnpj_formatado,
+                    razao_social=empresa_dados.get('razao_social', '').strip()[:200],
+                    nome_fantasia=empresa_dados.get('nome_fantasia', '').strip()[:200],
+                    uf=empresa_dados.get('uf', '').strip()[:2].upper(),
+                    criado_em=datetime.now().isoformat()
+                )
+                empresa_id = self.db_manager.inserir_empresa(empresa)
+                if empresa_id:
+                    self.estatisticas["empresas_cadastradas"] += 1
+                    logging.info(f"✅ Empresa criada: {empresa.razao_social} (ID: {empresa_id})")
+                else:
+                    logging.error("Falha ao criar empresa")
+                    return None
+
             return empresa_id
-            
+
         except Exception as e:
             logging.error(f"Erro ao processar empresa: {e}")
             return None
+
     
     def _montar_nota_fiscal(self, dados_nfe: Dict, empresa_id: int, hash_arquivo: str, 
-                           caminho_arquivo: str, analise_ia: Dict, calculos_rt: Dict) -> NotaFiscal:
+        caminho_arquivo: str, analise_ia: Dict, calculos_rt: Dict) -> NotaFiscal:
         """Monta objeto NotaFiscal para inserção no banco"""
         
         return NotaFiscal(
@@ -389,7 +441,8 @@ class NFeProcessorBI:
             status_sefaz=dados_nfe['status_sefaz'],
             
             # Pagamento
-            forma_pagamento=dados_nfe['forma_pagamento'],
+            forma_pagamento=dados_nfe.get('forma_pagamento', 'Não informado'),
+            condicao_pagamento=dados_nfe.get('condicao_pagamento', ''),
             
             # IA
             risco_fiscal=analise_ia['risco_fiscal'],
@@ -479,10 +532,23 @@ class NFeProcessorBI:
             return datetime.now().strftime('%Y-%m-%d')
     
     def _extrair_forma_pagamento(self, inf_nfe) -> str:
-        """Extrai forma de pagamento (simplificado)"""
-        pag = inf_nfe.find('.//pag')
-        if pag and pag.find('tPag') is not None:
-            tipo_pag = pag.find('tPag').text
+        """Extrai forma de pagamento, cobrindo <pag> e <pgtos>."""
+        try:
+            # Tenta tag singular
+            pag = inf_nfe.find('.//pag')
+            if pag is None:
+                # Tenta tag plural (alguns layouts usam pgtos/pagto)
+                pag = inf_nfe.find('.//pgtos')
+            if pag is None:
+                return 'Não informado'
+            
+            # Dentro de <pgtos> ou <pag> pode ter múltiplos <pagto> ou <detPag>
+            # Procuramos primeiro tPag em todos os descendentes
+            tPag_elem = pag.find('.//tPag') or pag.find('.//detPag/tPag')
+            if tPag_elem is None or not tPag_elem.text:
+                return 'Não informado'
+            
+            codigo = tPag_elem.text.strip()
             tipos = {
                 '01': 'Dinheiro',
                 '02': 'Cheque',
@@ -495,11 +561,14 @@ class NFeProcessorBI:
                 '13': 'Vale Combustível',
                 '15': 'Boleto Bancário',
                 '17': 'PIX',
+                '18': 'Transferência',
                 '90': 'Sem Pagamento',
                 '99': 'Outros'
             }
-            return tipos.get(tipo_pag, 'Não informado')
-        return 'Não informado'
+            return tipos.get(codigo, f'Código {codigo}')
+        except Exception:
+            return 'Não informado'
+
     
     def obter_dashboard_manager(self) -> DatabaseManager:
         """Retorna DatabaseManager para uso no Dashboard"""
@@ -508,3 +577,51 @@ class NFeProcessorBI:
     def obter_estatisticas(self) -> Dict[str, Any]:
         """Retorna estatísticas do processamento"""
         return self.estatisticas.copy()
+    
+      # === MÉTODOS DE COMPATIBILIDADE COM GUI ANTIGA ===
+    
+    def calcular_resumos(self):
+        """Método de compatibilidade - resumos já calculados no processar_pasta()"""
+        logging.info("Resumos já calculados durante o processamento")
+        return True
+    
+    def gerar_relatorios(self):
+        """Método de compatibilidade - gera relatórios básicos"""
+        try:
+            if not hasattr(self, 'estatisticas') or not self.estatisticas:
+                logging.warning("Nenhuma estatística disponível para relatório")
+                return False
+            
+            # Cria relatório texto simples
+            relatorio_path = os.path.join(self.pasta_saida, "relatorio_processamento.txt")
+            
+            os.makedirs(self.pasta_saida, exist_ok=True)
+            
+            with open(relatorio_path, 'w', encoding='utf-8') as f:
+                f.write("=== RELATÓRIO DE PROCESSAMENTO NFe ===\n\n")
+                f.write(f"Data/Hora: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n")
+                f.write(f"Pasta processada: {self.pasta_xml}\n\n")
+                
+                f.write("ESTATÍSTICAS:\n")
+                for chave, valor in self.estatisticas.items():
+                    f.write(f"• {chave.replace('_', ' ').title()}: {valor}\n")
+                
+                if hasattr(self, 'db_manager'):
+                    f.write("\nDADOS NO BANCO:\n")
+                    stats_db = self.db_manager.obter_estatisticas()
+                    f.write(f"• Total NFe no banco: {stats_db.get('total_notas', 0)}\n")
+                    f.write(f"• Valor total: R$ {stats_db.get('valor_total', 0):,.2f}\n")
+                    f.write(f"• Risco médio: {stats_db.get('risco_medio', 0):.1%}\n")
+            
+            logging.info(f"✅ Relatório salvo: {relatorio_path}")
+            return True
+            
+        except Exception as e:
+            logging.error(f"Erro ao gerar relatório: {e}")
+            return False
+    
+    # Método alternativo para GUI
+    def processar_pasta_gui(self):
+        """Método específico para GUI - processa e armazena estatísticas"""
+        self.estatisticas = self.processar_pasta()
+        return self.estatisticas

@@ -48,6 +48,22 @@ def main():
     pasta_saida_final = args.saida or config_manager.get('PADRAO', 'pasta_saida')
 
     # Se nenhum argumento for passado ou --gui for usado, abre a interface gráfica
+    if args.dashboard:
+        try:
+            from database.models import DatabaseManager
+            from ui.dashboard_nfe import DashboardNFe
+            import tkinter as tk
+
+            db_manager = DatabaseManager()
+            temp_root = tk.Tk()
+            temp_root.withdraw()
+            dashboard = DashboardNFe(temp_root, db_manager)
+            temp_root.mainloop()
+            return
+        except ImportError as e:
+            print(f"Erro ao carregar dashboard: {e}")
+            return
+    
     if len(sys.argv) == 1 or args.gui:
         iniciar_gui()
     
