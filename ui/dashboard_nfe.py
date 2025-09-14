@@ -8,7 +8,7 @@ import threading
 
 from database.models import DatabaseManager
 from ia_fiscal.analisador_riscos import AnalisadorRiscos
-from processing.processor import NFeProcessor
+from processing.processor import NFeProcessorBI
 
 class DashboardNFe(tk.Toplevel):
     """Dashboard interativo para análise de NFe"""

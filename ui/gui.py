@@ -7,7 +7,7 @@ import webbrowser
 import logging
 import os
 
-from processing.processor import NFeProcessor
+from processing.processor import NFeProcessorBI
 from core.config import config_manager
 from sefaz_integration.client import SefazClient
 from ui.config_reforma import JanelaConfigReforma
@@ -43,6 +43,12 @@ def iniciar_gui():
         command=lambda: JanelaConfigReforma(root)
     )
 
+    menu_gerenciar.add_separator()
+    menu_gerenciar.add_command(
+        label="📊 Dashboard Business Intelligence",
+        command=lambda: abrir_dashboard_bi(root)
+    )
+
     # --- Variáveis de Estado ---
     xml_folder = tk.StringVar(value=config_manager.get('PADRAO', 'pasta_xml'))
     output_folder = tk.StringVar(value=config_manager.get('PADRAO', 'pasta_saida'))
@@ -51,6 +57,18 @@ def iniciar_gui():
     processor_instance = None
 
     # --- Funções ---
+    def abrir_dashboard_bi(parent):
+    #Abre Dashboard Business Intelligence
+        try:
+            from database.models import DatabaseManager
+            from ui.dashboard_nfe import DashboardNFe
+            
+            db_manager = DatabaseManager()
+            dashboard = DashboardNFe(parent, db_manager)
+            
+        except Exception as e:
+            messagebox.showerror("Erro", f"Erro ao abrir Dashboard BI: {e}")
+    
     def select_folder(variable, title):
         path = filedialog.askdirectory(title=title)
         if path:
@@ -82,7 +100,7 @@ def iniciar_gui():
         progress_bar.start(10)
 
         try:
-            processor_instance = NFeProcessor(xml_folder.get(), output_folder.get())
+            processor_instance = NFeProcessorBI(xml_folder.get(), output_folder.get())
             processor_instance.processar_pasta()
             processor_instance.calcular_resumos()
             processor_instance.gerar_relatorios()
