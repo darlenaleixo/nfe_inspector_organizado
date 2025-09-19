@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
 import threading
 import logging
+import sqlite3
 
 
 from database.models import DatabaseManager
@@ -277,41 +278,165 @@ class DashboardNFe(tk.Toplevel):
     
     def aplicar_filtros(self):
         """Aplica filtros e atualiza a TreeView"""
-        
-        # Monta dicionário de filtros
+       
         filtros = {}
         
+        # Filtros de data
         if self.data_inicio.get():
             filtros['data_inicio'] = self.data_inicio.get()
         
         if self.data_fim.get():
             filtros['data_fim'] = self.data_fim.get()
         
+        # Filtros de status
         if self.status_var.get() and self.status_var.get() != "Todos":
             filtros['status_sefaz'] = self.status_var.get()
-        
+
         if self.pagamento_var.get() and self.pagamento_var.get() != "Todos":
             filtros['forma_pagamento'] = self.pagamento_var.get()
         
+        # Filtros de valor
         if self.valor_min.get():
             try:
                 filtros['valor_min'] = float(self.valor_min.get())
             except ValueError:
                 pass
-        
+
         if self.valor_max.get():
             try:
                 filtros['valor_max'] = float(self.valor_max.get())
             except ValueError:
                 pass
         
-        # Consulta dados
-        self.dados_atuais = self.db_manager.consultar_notas_fiscais(filtros)
+        # CONSULTA COM FILTRO DE EMPRESAS ATIVAS
+        self.dados_atuais = self.consultar_nfe_empresas_ativas(filtros)
         
-        # Atualiza TreeView
         self.atualizar_treeview()
         self.atualizar_estatisticas()
-    
+
+    def consultar_nfe_empresas_ativas(self, filtros: dict = None) -> list:
+        """Consulta NFe apenas de empresas ativas (não excluídas)"""
+        try:
+            with sqlite3.connect(self.db_manager.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+
+                query = """
+                SELECT nf.*, e.razao_social    AS nome_emissor,
+                        e.cnpj              AS cnpj_emissor,
+                        e.uf                AS uf_emissor
+                FROM notas_fiscais nf
+                INNER JOIN empresas e
+                    ON nf.empresa_id = e.id
+                LEFT JOIN empresas_detalhadas ed
+                    ON e.id = ed.empresa_id
+                WHERE COALESCE(ed.ativa, 1) = 1
+                AND COALESCE(ed.situacao_cadastral, 'ATIVA') != 'EXCLUIDA'
+                """
+
+                params = []
+
+                if filtros:
+                    if filtros.get('data_inicio'):
+                        query += " AND DATE(nf.data_emissao) >= ?"
+                        params.append(filtros['data_inicio'])
+                    if filtros.get('data_fim'):
+                        query += " AND DATE(nf.data_emissao) <= ?"
+                        params.append(filtros['data_fim'])
+                    if filtros.get('status_sefaz'):
+                        query += " AND nf.status_sefaz = ?"
+                        params.append(filtros['status_sefaz'])
+                    if filtros.get('forma_pagamento'):
+                        query += " AND nf.forma_pagamento = ?"
+                        params.append(filtros['forma_pagamento'])
+                    if filtros.get('valor_min'):
+                        query += " AND nf.valor_total >= ?"
+                        params.append(filtros['valor_min'])
+                    if filtros.get('valor_max'):
+                        query += " AND nf.valor_total <= ?"
+                        params.append(filtros['valor_max'])
+
+                query += " ORDER BY nf.data_emissao DESC"
+                cursor.execute(query, params)
+                rows = cursor.fetchall()
+                return [dict(row) for row in rows]
+
+        except Exception as e:
+            logging.error(f"❌ Erro ao consultar NFe de empresas ativas: {e}")
+            return []
+
+    def carregar_empresas(self):
+        """Carrega lista de empresas ATIVAS na aba Empresas"""
+        for item in self.tree_empresas.get_children():
+            self.tree_empresas.delete(item)
+
+        try:
+            with sqlite3.connect(self.db_manager.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+
+                cursor.execute("""
+                SELECT e.cnpj,
+                    e.razao_social,
+                    e.uf,
+                    COUNT(nf.id)             AS total_nfes,
+                    COALESCE(SUM(nf.valor_total), 0) AS valor_total
+                FROM empresas e
+                LEFT JOIN empresas_detalhadas ed
+                    ON e.id = ed.empresa_id
+                LEFT JOIN notas_fiscais nf
+                    ON e.id = nf.empresa_id
+                WHERE COALESCE(ed.ativa, 1) = 1
+                AND COALESCE(ed.situacao_cadastral, 'ATIVA') != 'EXCLUIDA'
+                GROUP BY e.id, e.cnpj, e.razao_social, e.uf
+                ORDER BY e.razao_social
+                """)
+
+                empresas = cursor.fetchall()
+                for emp in empresas:
+                    self.tree_empresas.insert('', tk.END, values=(
+                        emp['cnpj'],
+                        emp['razao_social'],
+                        emp['uf'],
+                        emp['total_nfes'],
+                        f"R$ {emp['valor_total']:,.2f}"
+                    ))
+
+        except Exception as e:
+            logging.error(f"❌ Erro ao carregar empresas ativas: {e}")
+            messagebox.showerror("Erro", f"Erro ao carregar empresas:\n{e}")
+
+
+    def filtrar_por_empresa(self):
+        """Filtra notas por empresa selecionada (apenas ativas)"""
+        sel = self.tree_empresas.selection()
+        if not sel:
+            return
+
+        cnpj = self.tree_empresas.item(sel[0])['values'][0]
+        try:
+            with sqlite3.connect(self.db_manager.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("""
+                SELECT nf.*, e.razao_social AS nome_emissor
+                FROM notas_fiscais nf
+                INNER JOIN empresas e
+                    ON nf.empresa_id = e.id
+                LEFT JOIN empresas_detalhadas ed
+                    ON e.id = ed.empresa_id
+                WHERE e.cnpj = ?
+                AND COALESCE(ed.ativa, 1) = 1
+                AND COALESCE(ed.situacao_cadastral, 'ATIVA') != 'EXCLUIDA'
+                ORDER BY nf.data_emissao DESC
+                """, (cnpj,))
+                self.dados_atuais = [dict(row) for row in cursor.fetchall()]
+                self.atualizar_treeview()
+                self.atualizar_estatisticas()
+        except Exception as e:
+            logging.error(f"❌ Erro ao filtrar por empresa: {e}")
+            messagebox.showerror("Erro", f"Erro ao filtrar:\n{e}")
+
     def atualizar_treeview(self):
         """Atualiza dados na TreeView"""
         
@@ -374,28 +499,7 @@ class DashboardNFe(tk.Toplevel):
         self.label_total_notas.config(text=str(total_notas))
         self.label_valor_total.config(text=f"R$ {valor_total:,.2f}")
         self.label_risco_medio.config(text=f"{risco_medio:.1%}")
-    
-    def carregar_empresas(self):
-        """Carrega lista de empresas"""
-        
-        # Limpa TreeView de empresas
-        for item in self.tree_empresas.get_children():
-            self.tree_empresas.delete(item)
-        
-        # Carrega empresas
-        empresas = self.db_manager.listar_empresas()
-        
-        for empresa in empresas:
-            self.tree_empresas.insert("", tk.END, values=(
-                empresa.get('cnpj', ''),
-                empresa.get('razao_social', ''),
-                empresa.get('uf', ''),
-                empresa.get('total_notas', 0),
-                f"R$ {empresa.get('valor_total', 0):,.2f}"
-            ))
-    
-    # === EVENTOS ===
-    
+                 
     def on_select_nota(self, event):
         """Evento chamado quando uma nota é selecionada"""
         
@@ -659,7 +763,7 @@ class DashboardNFe(tk.Toplevel):
 
     def carregar_dados_iniciais(self):
         """Carrega dados iniciais do dashboard - COM EMPRESAS"""
-        self.carregar_combo_empresas()
+
         self.aplicar_filtros()
         self.carregar_empresas()
         self.atualizar_estatisticas()
@@ -832,45 +936,45 @@ class DashboardNFe(tk.Toplevel):
 
 
     def carregar_empresas(self):
-        """Carrega lista de empresas - VERSÃO COMPLETA"""
-        
-        # Limpa TreeView
+        """Carrega empresas no dashboard"""
         for item in self.tree_empresas.get_children():
             self.tree_empresas.delete(item)
         
         try:
-            # Carrega empresas
-            empresas = self.db_manager.listar_empresas()
-            
-            for empresa in empresas:
-                # Formata data
-                try:
-                    if empresa.get('criado_em'):
-                        data_criacao = datetime.fromisoformat(empresa['criado_em'].replace('Z', '+00:00'))
-                        data_formatada = data_criacao.strftime('%d/%m/%Y')
-                    else:
-                        data_formatada = 'N/A'
-                except:
-                    data_formatada = 'N/A'
+            with sqlite3.connect(self.db_manager.db_path) as conn:
+                conn.row_factory = sqlite3.Row  
+                cursor = conn.cursor()
                 
-                self.tree_empresas.insert("", tk.END, values=(
-                    empresa.get('cnpj', ''),
-                    empresa.get('razao_social', ''),
-                    empresa.get('nome_fantasia', ''),
-                    empresa.get('uf', ''),
-                    empresa.get('total_notas', 0),
-                    f"R$ {empresa.get('valor_total', 0):,.2f}",
-                    data_formatada
-                ))
-            
-            # Atualiza combo de empresas também
-            self.carregar_combo_empresas()
-            
-            logging.info(f"✅ {len(empresas)} empresas carregadas")
-            
+                cursor.execute("""
+                SELECT 
+                    e.cnpj,
+                    e.razao_social, 
+                    e.uf,
+                    COUNT(nf.id) as total_nfes,
+                    COALESCE(SUM(nf.valor_total), 0) as valor_total
+                FROM empresas e
+                LEFT JOIN empresas_detalhadas ed ON e.id = ed.empresa_id  
+                LEFT JOIN notas_fiscais nf ON e.id = nf.empresa_id
+                WHERE COALESCE(ed.situacao_cadastral, 'ATIVA') != 'EXCLUIDA'
+                GROUP BY e.id, e.cnpj, e.razao_social, e.uf
+                ORDER BY e.razao_social
+                """)
+                
+                empresas = cursor.fetchall()
+                
+                for empresa in empresas:
+                    self.tree_empresas.insert('', tk.END, values=(
+                        empresa['cnpj'],
+                        empresa['razao_social'],
+                        empresa['uf'],
+                        empresa['total_nfes'], 
+                        f"R$ {empresa['valor_total']:,.2f}"
+                    ))
+                    
         except Exception as e:
             logging.error(f"❌ Erro ao carregar empresas: {e}")
             messagebox.showerror("Erro", f"Erro ao carregar empresas:\n{e}")
+
 
     def on_select_empresa(self, event):
         """Evento quando empresa é selecionada"""

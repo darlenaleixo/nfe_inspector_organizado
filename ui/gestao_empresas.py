@@ -5,6 +5,7 @@ from tkinter import ttk, messagebox, filedialog
 from datetime import datetime
 from typing import Optional
 import threading
+import sqlite3
 
 from empresa.manager import GerenciadorEmpresas, EmpresaCompleta
 from database.models import DatabaseManager
@@ -280,30 +281,50 @@ class GestaoEmpresasGUI:
     def carregar_empresas(self):
         """Carrega lista de empresas"""
         try:
-            # Limpa árvore
+            
             for item in self.tree.get_children():
                 self.tree.delete(item)
             
-            # Carrega empresas
-            empresas = self.gerenciador.listar_empresas_completas()
-            
-            for emp in empresas:
-                self.tree.insert("", tk.END, values=(
-                    emp.cnpj or '',
-                    emp.razao_social or '',
-                    emp.uf or '',
-                    emp.cidade or '',
-                    emp.situacao_cadastral or 'N/A',
-                    emp.total_nfes or 0,
-                    f"R$ {emp.valor_total_movimentado:,.2f}"
-                ))
-            
-            # Limpa seleção
+            # ✅ LEFT JOIN para não perder empresas sem detalhes
+            with sqlite3.connect(self.db_manager.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                SELECT 
+                    e.cnpj,
+                    e.razao_social,
+                    e.uf,
+                    COALESCE(ed.cidade, '') as cidade,
+                    COALESCE(ed.situacao_cadastral, 'ATIVA') as situacao_cadastral,
+                    COUNT(nf.id) as total_nfes,
+                    COALESCE(SUM(nf.valor_total), 0) as valor_total_movimentado
+                FROM empresas e
+                LEFT JOIN empresas_detalhadas ed ON e.id = ed.empresa_id
+                LEFT JOIN notas_fiscais nf ON e.id = nf.empresa_id
+                WHERE COALESCE(ed.situacao_cadastral, 'ATIVA') != 'EXCLUIDA'
+                GROUP BY e.id, e.cnpj, e.razao_social, e.uf
+                ORDER BY e.razao_social
+                """)
+                
+                empresas = cursor.fetchall()
+                
+                for emp in empresas:
+                    self.tree.insert('', tk.END, values=(
+                        emp['cnpj'] or '',
+                        emp['razao_social'] or '',
+                        emp['uf'] or '',
+                        emp['cidade'] or '',
+                        emp['situacao_cadastral'] or 'ATIVA',
+                        emp['total_nfes'] or 0,
+                        f"R$ {emp['valor_total_movimentado']:,.2f}"
+                    ))            
             self.empresa_selecionada = None
             self.limpar_detalhes()
             
         except Exception as e:
-            messagebox.showerror("Erro", f"Erro ao carregar empresas: {e}")
+            messagebox.showerror("Erro", f"Erro ao carregar empresas:\n{e}")
+
     
     def aplicar_filtros(self):
         """Aplica filtros na lista"""
@@ -513,7 +534,22 @@ class GestaoEmpresasGUI:
                 self.carregar_empresas()
             except Exception as e:
                 messagebox.showerror("Erro", f"Erro ao excluir empresa:\n\n{e}")
-    
+    # No método de exclusão da interface (gestao_empresas.py)
+    def excluir_empresa_selecionada(self):
+        try:
+            # Liberar conexões antes da exclusão
+            self.gerenciador.liberar_conexoes_db()
+            
+            # Prosseguir com exclusão
+            resultado = self.gerenciador.excluir_empresa(empresa_id, "Interface")
+            
+            if resultado:
+                messagebox.showinfo("Sucesso", "Empresa excluída com sucesso!")
+                self.carregar_empresas()  # Recarregar lista
+            
+        except Exception as e:
+            messagebox.showerror("Erro", f"Erro ao excluir empresa:\n{e}")
+
     def importar_empresas(self):
         """Importa empresas de arquivo"""
         arquivo = filedialog.askopenfilename(
