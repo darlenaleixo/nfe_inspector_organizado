@@ -389,20 +389,21 @@ class NFeProcessorBI:
                     uf=empresa_dados.get('uf', '').strip()[:2].upper(),
                     criado_em=datetime.now().isoformat()
                 )
-                empresa_id = self.db_manager.inserir_empresa(empresa)
+                # DEPOIS - conta apenas empresas REALMENTE novas
+                empresa_id, eh_empresa_nova = self.db_manager.inserir_empresa_retorna_status(empresa)
                 if empresa_id:
-                    self.estatisticas["empresas_cadastradas"] += 1
-                    logging.info(f"✅ Empresa criada: {empresa.razao_social} (ID: {empresa_id})")
-                else:
-                    logging.error("Falha ao criar empresa")
-                    return None
+                    if eh_empresa_nova:
+                        self.estatisticas["empresas_cadastradas"] += 1
+                        logging.info(f"✅ Nova empresa criada: {empresa.razao_social} (ID: {empresa_id})")
+                    else:
+                        logging.debug(f"Empresa já existente: {empresa.razao_social} (ID: {empresa_id})")
+
 
             return empresa_id
 
         except Exception as e:
             logging.error(f"Erro ao processar empresa: {e}")
             return None
-
     
     def _montar_nota_fiscal(self, dados_nfe: Dict, empresa_id: int, hash_arquivo: str, 
         caminho_arquivo: str, analise_ia: Dict, calculos_rt: Dict) -> NotaFiscal:
