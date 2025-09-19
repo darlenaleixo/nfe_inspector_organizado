@@ -6,6 +6,8 @@ import sys
 import logging
 import tkinter as tk
 from datetime import datetime
+from database.models import DatabaseManager
+
 
 # Configuração do logging
 logging.basicConfig(
@@ -278,6 +280,7 @@ def exibir_status_reforma(config_rt):
 def main():
     """Função principal que gerencia a execução do programa via CLI ou GUI."""
     
+    
     # Verifica conformidade antes de iniciar
     verificar_conformidade_sistema()
     
@@ -400,8 +403,13 @@ def main():
             print("❌ Interface GUI não disponível")
             return
             
-        logging.info("Iniciando interface gráfica com suporte à IA Fiscal e Reforma Tributária")
+        logging.info("Iniciando interface gráfica moderna")
         try:
+            # NOVA INTERFACE MODERNA
+            from ui.gui_moderna import iniciar_gui_moderna
+            iniciar_gui_moderna()
+        except ImportError:
+            # Fallback para interface antiga
             iniciar_gui()
         except Exception as e:
             print(f"❌ Erro ao iniciar GUI: {e}")
