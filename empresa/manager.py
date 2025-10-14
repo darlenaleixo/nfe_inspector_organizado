@@ -47,7 +47,7 @@ class GerenciadorEmpresas:
     def __init__(self, db_manager: DatabaseManager):
         self.db_manager = db_manager
         self.init_extended_tables()
-        
+    
     def init_extended_tables(self):
         """Cria tabelas estendidas para empresas"""
         try:
@@ -56,53 +56,53 @@ class GerenciadorEmpresas:
                 
                 # Tabela empresas estendida
                 cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS empresas_detalhadas (
-                        id INTEGER PRIMARY KEY,
-                        empresa_id INTEGER UNIQUE,
-                        cidade TEXT,
-                        endereco TEXT,
-                        cep TEXT,
-                        telefone TEXT,
-                        email TEXT,
-                        inscricao_estadual TEXT,
-                        regime_tributario TEXT,
-                        atividade_principal TEXT,
-                        situacao_cadastral TEXT DEFAULT 'ATIVA',
-                        atualizado_em TEXT,
-                        criado_por TEXT DEFAULT 'Sistema',
-                        ativa BOOLEAN DEFAULT 1,
-                        monitoramento BOOLEAN DEFAULT 1,
-                        alertas BOOLEAN DEFAULT 1,
-                        FOREIGN KEY (empresa_id) REFERENCES empresas (id)
-                    )
+                CREATE TABLE IF NOT EXISTS empresas_detalhadas (
+                    id INTEGER PRIMARY KEY,
+                    empresa_id INTEGER UNIQUE,
+                    cidade TEXT,
+                    endereco TEXT,
+                    cep TEXT,
+                    telefone TEXT,
+                    email TEXT,
+                    inscricao_estadual TEXT,
+                    regime_tributario TEXT,
+                    atividade_principal TEXT,
+                    situacao_cadastral TEXT DEFAULT 'ATIVA',
+                    atualizado_em TEXT,
+                    criado_por TEXT DEFAULT 'Sistema',
+                    ativa BOOLEAN DEFAULT 1,
+                    monitoramento BOOLEAN DEFAULT 1,
+                    alertas BOOLEAN DEFAULT 1,
+                    FOREIGN KEY (empresa_id) REFERENCES empresas (id)
+                )
                 """)
                 
                 # Tabela de histórico de alterações
                 cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS empresas_historico (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        empresa_id INTEGER,
-                        campo_alterado TEXT,
-                        valor_anterior TEXT,
-                        valor_novo TEXT,
-                        alterado_por TEXT,
-                        alterado_em TEXT DEFAULT CURRENT_TIMESTAMP,
-                        FOREIGN KEY (empresa_id) REFERENCES empresas (id)
-                    )
+                CREATE TABLE IF NOT EXISTS empresas_historico (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    empresa_id INTEGER,
+                    campo_alterado TEXT,
+                    valor_anterior TEXT,
+                    valor_novo TEXT,
+                    alterado_por TEXT,
+                    alterado_em TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (empresa_id) REFERENCES empresas (id)
+                )
                 """)
                 
                 # Tabela de configurações por empresa
                 cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS empresas_config (
-                        id INTEGER PRIMARY KEY,
-                        empresa_id INTEGER UNIQUE,
-                        auto_processar BOOLEAN DEFAULT 1,
-                        nivel_alerta TEXT DEFAULT 'MEDIO',
-                        email_notificacao TEXT,
-                        dias_backup INTEGER DEFAULT 30,
-                        config_json TEXT,
-                        FOREIGN KEY (empresa_id) REFERENCES empresas (id)
-                    )
+                CREATE TABLE IF NOT EXISTS empresas_config (
+                    id INTEGER PRIMARY KEY,
+                    empresa_id INTEGER UNIQUE,
+                    auto_processar BOOLEAN DEFAULT 1,
+                    nivel_alerta TEXT DEFAULT 'MEDIO',
+                    email_notificacao TEXT,
+                    dias_backup INTEGER DEFAULT 30,
+                    config_json TEXT,
+                    FOREIGN KEY (empresa_id) REFERENCES empresas (id)
+                )
                 """)
                 
                 conn.commit()
@@ -173,8 +173,8 @@ class GerenciadorEmpresas:
                     if 'razao_social' in dados:
                         update_base.append("razao_social = ?")
                         params_base.append(dados['razao_social'][:200])
-                        self._registrar_alteracao(empresa_id, 'razao_social', 
-                                                empresa_atual.razao_social, 
+                        self._registrar_alteracao(empresa_id, 'razao_social',
+                                                empresa_atual.razao_social,
                                                 dados['razao_social'], alterado_por)
                     
                     if 'nome_fantasia' in dados:
@@ -194,9 +194,9 @@ class GerenciadorEmpresas:
                     if update_base:
                         params_base.append(empresa_id)
                         cursor.execute(f"""
-                            UPDATE empresas 
-                            SET {', '.join(update_base)}
-                            WHERE id = ?
+                        UPDATE empresas 
+                        SET {', '.join(update_base)}
+                        WHERE id = ?
                         """, params_base)
                 
                 # Atualiza detalhes
@@ -211,33 +211,160 @@ class GerenciadorEmpresas:
             return False
     
     def excluir_empresa(self, empresa_id: int, excluido_por: str = "Manual") -> bool:
-        """Exclui empresa com verificações de segurança"""
+        """Marca empresa como excluída, mantendo dados e notas fiscais vinculadas"""
         try:
-            # Verificar se tem NFe associadas
-            stats = self.db_manager.obter_estatisticas(empresa_id)
-            if stats.get('total_notas', 0) > 0:
-                raise ValueError(f"Empresa possui {stats['total_notas']} NFe(s). "
-                               f"Não é possível excluir.")
-            
-            with sqlite3.connect(self.db_manager.db_path) as conn:
+            # Usar timeout para evitar lock
+            with sqlite3.connect(self.db_manager.db_path, timeout=30.0) as conn:
+                conn.execute("PRAGMA journal_mode=WAL")  # Permite leituras concorrentes
+                conn.execute("BEGIN IMMEDIATE")  # Lock exclusivo imediato
+                
                 cursor = conn.cursor()
                 
-                # Registrar exclusão no histórico
-                self._registrar_alteracao(empresa_id, 'STATUS', 'ATIVA', 'EXCLUIDA', excluido_por)
+                # Verificar se empresa existe
+                cursor.execute("SELECT id, razao_social FROM empresas WHERE id = ?", (empresa_id,))
+                empresa = cursor.fetchone()
+                if not empresa:
+                    conn.rollback()
+                    raise ValueError("Empresa não encontrada")
                 
-                # Excluir tabelas relacionadas
-                cursor.execute("DELETE FROM empresas_config WHERE empresa_id = ?", (empresa_id,))
-                cursor.execute("DELETE FROM empresas_detalhadas WHERE empresa_id = ?", (empresa_id,))
-                cursor.execute("DELETE FROM empresas WHERE id = ?", (empresa_id,))
+                logging.info(f"Iniciando exclusão da empresa {empresa_id}: {empresa[1]}")
                 
+                # Verificar se tabela empresas tem campo ativa
+                cursor.execute("PRAGMA table_info(empresas)")
+                colunas_empresas = [col[1] for col in cursor.fetchall()]
+                
+                if 'ativa' in colunas_empresas:
+                    cursor.execute("UPDATE empresas SET ativa = 0 WHERE id = ?", (empresa_id,))
+                    logging.debug(f"Campo 'ativa' atualizado para empresa {empresa_id}")
+                
+                # Verificar se registro existe na tabela detalhada
+                cursor.execute("SELECT empresa_id FROM empresas_detalhadas WHERE empresa_id = ?", (empresa_id,))
+                detalhes_existe = cursor.fetchone()
+                
+                if detalhes_existe:
+                    # Atualizar registro existente
+                    cursor.execute("""
+                    UPDATE empresas_detalhadas 
+                    SET situacao_cadastral = 'EXCLUIDA',
+                        ativa = 0,
+                        atualizado_em = ?
+                    WHERE empresa_id = ?
+                    """, (datetime.now().isoformat(), empresa_id))
+                    logging.debug(f"Registro detalhado atualizado para empresa {empresa_id}")
+                else:
+                    # Criar registro se não existir
+                    cursor.execute("""
+                    INSERT INTO empresas_detalhadas 
+                    (empresa_id, situacao_cadastral, ativa, atualizado_em, criado_por)
+                    VALUES (?, 'EXCLUIDA', 0, ?, ?)
+                    """, (empresa_id, datetime.now().isoformat(), excluido_por))
+                    logging.debug(f"Registro detalhado criado para empresa {empresa_id}")
+                
+                # Registrar no histórico
+                cursor.execute("""
+                INSERT INTO empresas_historico 
+                (empresa_id, campo_alterado, valor_anterior, valor_novo, alterado_por, alterado_em)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """, (empresa_id, 'situacao_cadastral', 'ATIVA', 'EXCLUIDA', 
+                    excluido_por, datetime.now().isoformat()))
+                
+                # Commit explícito
                 conn.commit()
                 
-                logging.info(f"✅ Empresa {empresa_id} excluída por {excluido_por}")
+                logging.info(f"✅ Empresa {empresa_id} ({empresa[1]}) marcada como excluída por {excluido_por}")
                 return True
                 
+        except sqlite3.OperationalError as e:
+            if "database is locked" in str(e):
+                logging.error(f"❌ Banco de dados travado ao excluir empresa {empresa_id}. Tentando novamente...")
+                # Tentar novamente após pequena pausa
+                import time
+                time.sleep(0.5)
+                return self._excluir_empresa_retry(empresa_id, excluido_por)
+            else:
+                logging.error(f"❌ Erro SQLite ao excluir empresa {empresa_id}: {e}")
+                raise
+                
         except Exception as e:
-            logging.error(f"❌ Erro ao excluir empresa {empresa_id}: {e}")
+            logging.error(f"❌ Erro geral ao excluir empresa {empresa_id}: {e}")
             raise
+
+    def _excluir_empresa_retry(self, empresa_id: int, excluido_por: str, tentativas: int = 3) -> bool:
+        """Retry da exclusão em caso de database lock"""
+        import time
+        
+        for tentativa in range(tentativas):
+            try:
+                logging.info(f"Tentativa {tentativa + 1} de exclusão da empresa {empresa_id}")
+                
+                # Forçar fechamento de conexões ociosas
+                import gc
+                gc.collect()
+                
+                with sqlite3.connect(self.db_manager.db_path, timeout=60.0) as conn:
+                    conn.execute("PRAGMA busy_timeout = 60000")  # 60 segundos de timeout
+                    conn.execute("PRAGMA journal_mode=WAL")
+                    
+                    cursor = conn.cursor()
+                    
+                    # Verificar se empresa existe
+                    cursor.execute("SELECT id, razao_social FROM empresas WHERE id = ?", (empresa_id,))
+                    empresa = cursor.fetchone()
+                    if not empresa:
+                        raise ValueError("Empresa não encontrada")
+                    
+                    # Marcar como excluída na tabela detalhada
+                    cursor.execute("""
+                    INSERT OR REPLACE INTO empresas_detalhadas 
+                    (empresa_id, situacao_cadastral, ativa, atualizado_em, criado_por)
+                    VALUES (?, 'EXCLUIDA', 0, ?, ?)
+                    """, (empresa_id, datetime.now().isoformat(), excluido_por))
+                    
+                    # Registrar no histórico
+                    cursor.execute("""
+                    INSERT INTO empresas_historico 
+                    (empresa_id, campo_alterado, valor_anterior, valor_novo, alterado_por)
+                    VALUES (?, ?, ?, ?, ?)
+                    """, (empresa_id, 'situacao_cadastral', 'ATIVA', 'EXCLUIDA', excluido_por))
+                    
+                    conn.commit()
+                    
+                    logging.info(f"✅ Empresa {empresa_id} excluída com sucesso (tentativa {tentativa + 1})")
+                    return True
+                    
+            except sqlite3.OperationalError as e:
+                if "database is locked" in str(e) and tentativa < tentativas - 1:
+                    wait_time = (tentativa + 1) * 0.5  # Espera progressiva
+                    logging.warning(f"Database ainda travado. Aguardando {wait_time}s...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    logging.error(f"❌ Falha final na exclusão após {tentativa + 1} tentativas: {e}")
+                    raise
+                    
+            except Exception as e:
+                logging.error(f"❌ Erro na tentativa {tentativa + 1}: {e}")
+                if tentativa == tentativas - 1:
+                    raise
+                time.sleep(0.5)
+        
+        return False
+
+    def liberar_conexoes_db(self):
+        """Força liberação de conexões SQLite"""
+        try:
+            import gc
+            gc.collect()
+            
+            # Fechar conexão do db_manager se existir
+            if hasattr(self.db_manager, '_connection') and self.db_manager._connection:
+                self.db_manager._connection.close()
+                self.db_manager._connection = None
+                
+            logging.debug("Conexões SQLite liberadas")
+            
+        except Exception as e:
+            logging.warning(f"Erro ao liberar conexões: {e}")
     
     def obter_empresa_completa(self, empresa_id: int) -> Optional[EmpresaCompleta]:
         """Obtém empresa com todos os dados"""
@@ -247,27 +374,48 @@ class GerenciadorEmpresas:
                 cursor = conn.cursor()
                 
                 cursor.execute("""
-                    SELECT 
-                        e.*,
-                        ed.cidade, ed.endereco, ed.cep, ed.telefone, ed.email,
-                        ed.inscricao_estadual, ed.regime_tributario, ed.atividade_principal,
-                        ed.situacao_cadastral, ed.atualizado_em, ed.criado_por,
-                        ed.ativa, ed.monitoramento, ed.alertas,
-                        COUNT(nf.id) as total_nfes,
-                        COALESCE(SUM(nf.valor_total), 0) as valor_total_movimentado,
-                        MAX(nf.data_processamento) as ultimo_processamento
-                    FROM empresas e
-                    LEFT JOIN empresas_detalhadas ed ON e.id = ed.empresa_id
-                    LEFT JOIN notas_fiscais nf ON e.id = nf.empresa_id
-                    WHERE e.id = ?
-                    GROUP BY e.id
+                SELECT
+                    e.*,
+                    ed.cidade, 
+                    ed.endereco, 
+                    ed.cep, 
+                    ed.telefone, 
+                    ed.email,
+                    ed.inscricao_estadual,
+                    ed.regime_tributario, 
+                    ed.atividade_principal,
+                    ed.situacao_cadastral, 
+                    ed.atualizado_em, 
+                    ed.criado_por,
+                    COALESCE(ed.ativa, 1) as ativa,
+                    COALESCE(ed.monitoramento, 1) as monitoramento,
+                    COALESCE(ed.alertas, 1) as alertas,
+                    COUNT(nf.id) as total_nfes,
+                    COALESCE(SUM(nf.valor_total), 0) as valor_total_movimentado,
+                    MAX(nf.data_processamento) as ultimo_processamento
+                FROM empresas e
+                LEFT JOIN empresas_detalhadas ed ON e.id = ed.empresa_id
+                LEFT JOIN notas_fiscais nf ON e.id = nf.empresa_id
+                WHERE e.id = ?
+                GROUP BY e.id
                 """, (empresa_id,))
                 
                 row = cursor.fetchone()
                 if not row:
                     return None
+                    
+                data = dict(row)
                 
-                return EmpresaCompleta(**dict(row))
+                # Adicionar campos que podem estar ausentes
+                data['inscricao_estadual'] = data.get('inscricao_estadual', '')
+                data['criado_em'] = data.get('criado_em', '')
+                
+                # Converter valores para bool
+                data['ativa'] = bool(data.get('ativa', 1))
+                data['monitoramento'] = bool(data.get('monitoramento', 1)) 
+                data['alertas'] = bool(data.get('alertas', 1))
+                
+                return EmpresaCompleta(**data)
                 
         except Exception as e:
             logging.error(f"❌ Erro ao obter empresa {empresa_id}: {e}")
@@ -281,39 +429,67 @@ class GerenciadorEmpresas:
                 cursor = conn.cursor()
                 
                 query = """
-                    SELECT 
-                        e.*, ed.cidade, ed.endereco, ed.situacao_cadastral,
-                        ed.ativa, ed.monitoramento,
-                        COUNT(nf.id) as total_nfes,
-                        COALESCE(SUM(nf.valor_total), 0) as valor_total_movimentado,
-                        MAX(nf.data_processamento) as ultimo_processamento
-                    FROM empresas e
-                    LEFT JOIN empresas_detalhadas ed ON e.id = ed.empresa_id
-                    LEFT JOIN notas_fiscais nf ON e.id = nf.empresa_id
-                    WHERE 1=1
+                SELECT
+                    e.*, 
+                    ed.cidade, 
+                    ed.endereco, 
+                    ed.cep,
+                    ed.telefone,
+                    ed.email,
+                    ed.inscricao_estadual,
+                    ed.regime_tributario,
+                    ed.atividade_principal,
+                    ed.situacao_cadastral,
+                    ed.atualizado_em,
+                    ed.criado_por,
+                    COALESCE(ed.ativa, 1) as ativa,
+                    COALESCE(ed.monitoramento, 1) as monitoramento,
+                    COALESCE(ed.alertas, 1) as alertas,
+                    COUNT(nf.id) as total_nfes,
+                    COALESCE(SUM(nf.valor_total), 0) as valor_total_movimentado,
+                    MAX(nf.data_processamento) as ultimo_processamento
+                FROM empresas e
+                LEFT JOIN empresas_detalhadas ed ON e.id = ed.empresa_id
+                LEFT JOIN notas_fiscais nf ON e.id = nf.empresa_id
+                WHERE COALESCE(ed.ativa, 1) = 1 
+                  AND COALESCE(ed.situacao_cadastral, 'ATIVA') != 'EXCLUIDA'
                 """
                 
                 params = []
-                
+
                 if filtros:
                     if filtros.get('uf'):
                         query += " AND e.uf = ?"
                         params.append(filtros['uf'])
-                    
+
                     if filtros.get('ativa') is not None:
-                        query += " AND ed.ativa = ?"
+                        query += " AND COALESCE(ed.ativa, 1) = ?"
                         params.append(filtros['ativa'])
-                    
+
                     if filtros.get('situacao_cadastral'):
                         query += " AND ed.situacao_cadastral = ?"
                         params.append(filtros['situacao_cadastral'])
-                
+                        
                 query += " GROUP BY e.id ORDER BY e.razao_social"
                 
                 cursor.execute(query, params)
                 rows = cursor.fetchall()
                 
-                return [EmpresaCompleta(**dict(row)) for row in rows]
+                empresas = []
+                for row in rows:
+                    data = dict(row)
+                    # Adicionar campos que podem estar ausentes
+                    data['inscricao_estadual'] = data.get('inscricao_estadual', '')
+                    data['criado_em'] = data.get('criado_em', '')
+                    
+                    # Converter booleanos
+                    data['ativa'] = bool(data.get('ativa', 1))
+                    data['monitoramento'] = bool(data.get('monitoramento', 1))
+                    data['alertas'] = bool(data.get('alertas', 1))
+                    
+                    empresas.append(EmpresaCompleta(**data))
+                    
+                return empresas
                 
         except Exception as e:
             logging.error(f"❌ Erro ao listar empresas: {e}")
@@ -327,9 +503,9 @@ class GerenciadorEmpresas:
                 cursor = conn.cursor()
                 
                 cursor.execute("""
-                    SELECT * FROM empresas_historico 
-                    WHERE empresa_id = ? 
-                    ORDER BY alterado_em DESC
+                SELECT * FROM empresas_historico 
+                WHERE empresa_id = ?
+                ORDER BY alterado_em DESC
                 """, (empresa_id,))
                 
                 return [dict(row) for row in cursor.fetchall()]
@@ -368,8 +544,7 @@ class GerenciadorEmpresas:
             logging.error(f"❌ Erro ao importar: {e}")
             raise
     
-    # === MÉTODOS AUXILIARES ===
-    
+    # Funções auxiliares internas
     def _limpar_cnpj(self, cnpj: str) -> str:
         return ''.join(filter(str.isdigit, cnpj or ''))
     
@@ -439,11 +614,11 @@ class GerenciadorEmpresas:
         with sqlite3.connect(self.db_manager.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO empresas_detalhadas (
-                    empresa_id, cidade, endereco, cep, telefone, email,
-                    inscricao_estadual, regime_tributario, atividade_principal,
-                    situacao_cadastral, atualizado_em, criado_por
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO empresas_detalhadas (
+                empresa_id, cidade, endereco, cep, telefone, email,
+                inscricao_estadual, regime_tributario, atividade_principal,
+                situacao_cadastral, atualizado_em, criado_por
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 empresa_id, dados.get('cidade', ''), dados.get('endereco', ''),
                 dados.get('cep', ''), dados.get('telefone', ''), dados.get('email', ''),
@@ -457,8 +632,8 @@ class GerenciadorEmpresas:
         with sqlite3.connect(self.db_manager.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO empresas_config (empresa_id, config_json) 
-                VALUES (?, ?)
+            INSERT INTO empresas_config (empresa_id, config_json)
+            VALUES (?, ?)
             """, (empresa_id, json.dumps({
                 'processamento_automatico': True,
                 'alertas_email': True,
@@ -466,19 +641,19 @@ class GerenciadorEmpresas:
                 'nivel_risco_maximo': 0.8
             })))
     
-    def _registrar_alteracao(self, empresa_id: int, campo: str, valor_anterior: Any, 
+    def _registrar_alteracao(self, empresa_id: int, campo: str, valor_anterior: Any,
                            valor_novo: Any, alterado_por: str):
         """Registra alteração no histórico"""
         with sqlite3.connect(self.db_manager.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO empresas_historico 
-                (empresa_id, campo_alterado, valor_anterior, valor_novo, alterado_por)
-                VALUES (?, ?, ?, ?, ?)
+            INSERT INTO empresas_historico 
+            (empresa_id, campo_alterado, valor_anterior, valor_novo, alterado_por)
+            VALUES (?, ?, ?, ?, ?)
             """, (empresa_id, campo, str(valor_anterior), str(valor_novo), alterado_por))
     
-    def _atualizar_detalhes_empresa(self, empresa_id: int, dados: Dict[str, Any], 
-                                   alterado_por: str, cursor):
+    def _atualizar_detalhes_empresa(self, empresa_id: int, dados: Dict[str, Any],
+                                  alterado_por: str, cursor):
         """Atualiza detalhes da empresa"""
         campos_detalhes = [
             'cidade', 'endereco', 'cep', 'telefone', 'email',
@@ -500,9 +675,9 @@ class GerenciadorEmpresas:
             params.append(empresa_id)
             
             cursor.execute(f"""
-                UPDATE empresas_detalhadas 
-                SET {', '.join(updates)}
-                WHERE empresa_id = ?
+            UPDATE empresas_detalhadas 
+            SET {', '.join(updates)}
+            WHERE empresa_id = ?
             """, params)
     
     def _exportar_csv(self, empresas: List[EmpresaCompleta]) -> str:
@@ -523,7 +698,7 @@ class GerenciadorEmpresas:
         for emp in empresas:
             writer.writerow([
                 emp.cnpj, emp.razao_social, emp.nome_fantasia, emp.uf, emp.cidade,
-                emp.telefone, emp.email, emp.situacao_cadastral, 
+                emp.telefone, emp.email, emp.situacao_cadastral,
                 emp.total_nfes, f"R$ {emp.valor_total_movimentado:,.2f}"
             ])
         
@@ -565,5 +740,32 @@ class GerenciadorEmpresas:
                 except Exception as e:
                     logging.error(f"Erro ao importar empresa {row}: {e}")
                     resultados['erro'] += 1
+        
+        return resultados
+
+    def _importar_json(self, arquivo_path: str, criado_por: str) -> Dict[str, int]:
+        """Importa empresas de JSON"""
+        resultados = {'sucesso': 0, 'erro': 0, 'duplicadas': 0}
+        
+        try:
+            with open(arquivo_path, 'r', encoding='utf-8') as file:
+                empresas_data = json.load(file)
+            
+            for empresa_data in empresas_data:
+                try:
+                    if self._empresa_existe(self._limpar_cnpj(empresa_data.get('cnpj', ''))):
+                        resultados['duplicadas'] += 1
+                        continue
+                    
+                    self.criar_empresa(empresa_data, criado_por)
+                    resultados['sucesso'] += 1
+                    
+                except Exception as e:
+                    logging.error(f"Erro ao importar empresa {empresa_data}: {e}")
+                    resultados['erro'] += 1
+                    
+        except Exception as e:
+            logging.error(f"Erro ao ler arquivo JSON: {e}")
+            raise
         
         return resultados
