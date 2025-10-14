@@ -6,6 +6,8 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, asdict
 import logging
+import os
+
 
 @dataclass
 class Empresa:
@@ -102,9 +104,20 @@ class ItemNotaFiscal:
 class DatabaseManager:
     """Gerenciador do banco de dados SQLite"""
     
-    def __init__(self, db_path: str = "nfe_data.db"):
-        self.db_path = db_path
+    def __init__(self, db_path: str = "None"):
+        # Se não especificar caminho, usar pasta 'database'
+        if db_path is None:
+            # Criar pasta 'database' se não existir
+            db_folder = os.path.join(os.getcwd(), 'database')
+            os.makedirs(db_folder, exist_ok=True)
+            
+            # Caminho completo do banco
+            self.db_path = os.path.join(db_folder, 'nfe_data.db')
+        else:
+            self.db_path = db_path
+            
         self.init_database()
+        logging.info(f"✅ Banco de dados iniciado: {self.db_path}")
     
     def init_database(self):
         """Inicializa o banco de dados com todas as tabelas"""
@@ -222,28 +235,93 @@ class DatabaseManager:
             raise
     
     def inserir_empresa(self, empresa: Empresa) -> int:
-        """Insere empresa se não existir; retorna o ID sempre."""
+        """Insere uma empresa e retorna o ID (nova ou existente)"""
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
-                # Insere apenas se não existir
-                cursor.execute("""
-                    INSERT OR IGNORE INTO empresas 
-                    (cnpj, razao_social, nome_fantasia, uf, criado_em)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (
-                    empresa.cnpj, empresa.razao_social, empresa.nome_fantasia,
-                    empresa.uf, datetime.now().isoformat()
-                ))
                 
-                # Busca o ID da empresa (existente ou recém-criada)
+                # Primeiro verifica se empresa já existe
                 cursor.execute("SELECT id FROM empresas WHERE cnpj = ?", (empresa.cnpj,))
-                result = cursor.fetchone()
-                return result[0]
+                resultado = cursor.fetchone()
+                
+                if resultado:
+                    # Empresa já existe, retorna ID existente
+                    empresa_id = resultado[0]
+                    logging.debug(f"Empresa já existe: CNPJ {empresa.cnpj}, ID {empresa_id}")
+                    return empresa_id
+                else:
+                    # Empresa não existe, insere nova
+                    cursor.execute("""
+                    INSERT INTO empresas (cnpj, razao_social, nome_fantasia, uf, criado_em)
+                    VALUES (?, ?, ?, ?, ?)
+                    """, (
+                        empresa.cnpj,
+                        empresa.razao_social,
+                        empresa.nome_fantasia,
+                        empresa.uf,
+                        datetime.now().isoformat()
+                    ))
+                    
+                    empresa_id = cursor.lastrowid
+                    logging.info(f"✅ Nova empresa cadastrada: {empresa.razao_social} (ID: {empresa_id})")
+                    return empresa_id
+                    
         except sqlite3.Error as e:
             logging.error(f"❌ Erro ao inserir empresa: {e}")
             return None
-    
+
+    def inserir_empresa_retorna_status(self, empresa: Empresa) -> tuple:
+        """Insere empresa e retorna (ID, foi_nova_empresa), criando detalhes obrigatórios."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                # Verifica existência
+                cursor.execute("SELECT id FROM empresas WHERE cnpj = ?", (empresa.cnpj,))
+                row = cursor.fetchone()
+                if row:
+                    return row[0], False
+                # Insere nova empresa
+                cursor.execute("""
+                    INSERT INTO empresas (cnpj, razao_social, nome_fantasia, uf, criado_em)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (
+                    empresa.cnpj,
+                    empresa.razao_social,
+                    empresa.nome_fantasia,
+                    empresa.uf,
+                    datetime.now().isoformat()
+                ))
+                empresa_id = cursor.lastrowid
+                # Garante tabela detalhada
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS empresas_detalhadas (
+                        id INTEGER PRIMARY KEY,
+                        empresa_id INTEGER UNIQUE,
+                        cidade TEXT, endereco TEXT, cep TEXT, telefone TEXT, email TEXT,
+                        inscricao_estadual TEXT, regime_tributario TEXT, atividade_principal TEXT,
+                        situacao_cadastral TEXT DEFAULT 'ATIVA', atualizado_em TEXT, criado_por TEXT,
+                        ativa BOOLEAN DEFAULT 1, monitoramento BOOLEAN DEFAULT 1, alertas BOOLEAN DEFAULT 1,
+                        FOREIGN KEY (empresa_id) REFERENCES empresas (id)
+                    )
+                """)
+                # Insere detalhes
+                cursor.execute("""
+                    INSERT INTO empresas_detalhadas (
+                        empresa_id, situacao_cadastral, ativa, monitoramento, alertas, criado_por, atualizado_em
+                    ) VALUES (?, 'ATIVA', 1, 1, 1, ?, ?)
+                """, (
+                    empresa_id,
+                    'Processador',
+                    datetime.now().isoformat()
+                ))
+                conn.commit()
+                return empresa_id, True
+        except sqlite3.Error as e:
+            logging.error(f"❌ Erro ao inserir empresa: {e}")
+            return None, False
+
+
+
     def inserir_nota_fiscal(self, nota: NotaFiscal) -> int:
         """Insere uma nota fiscal e retorna o ID"""
         try:

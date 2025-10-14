@@ -4,6 +4,8 @@ import re
 from typing import Dict, List, Any, Tuple
 from datetime import datetime
 from .config import config_ia
+import logging
+
 
 class DetectorFraudes:
     """Detecta fraudes e inconsistências em documentos fiscais"""
@@ -252,36 +254,56 @@ class DetectorFraudes:
         
         return problemas
     
-    def _validar_cnpj(self, cnpj: str) -> bool:
-        """Valida CNPJ com dígitos verificadores"""
-        if not cnpj:
-            return False
+    def _validar_cnpj(self, cnpj):
+        """Valida CNPJ usando algoritmo oficial"""
+        try:
+            # CORREÇÃO: Converter para string primeiro
+            if cnpj is None:
+                return False
+                
+            cnpj_str = str(cnpj)  # Converter para string
             
-        # Remove caracteres não numéricos
-        cnpj = re.sub(r'[^0-9]', '', cnpj)
-        
-        if len(cnpj) != 14:
+            # Remove caracteres não numéricos
+            cnpj = re.sub(r'[^0-9]', '', cnpj_str)
+            
+            # Verifica se tem 14 dígitos
+            if len(cnpj) != 14:
+                return False
+            
+            # Verifica se todos os dígitos são iguais
+            if cnpj == cnpj[0] * 14:
+                return False
+            
+            # Calcula primeiro dígito verificador
+            soma = 0
+            peso = 5
+            for i in range(12):
+                soma += int(cnpj[i]) * peso
+                peso -= 1
+                if peso < 2:
+                    peso = 9
+            
+            resto = soma % 11
+            dv1 = 0 if resto < 2 else 11 - resto
+            
+            # Calcula segundo dígito verificador
+            soma = 0
+            peso = 6
+            for i in range(13):
+                soma += int(cnpj[i]) * peso
+                peso -= 1
+                if peso < 2:
+                    peso = 9
+            
+            resto = soma % 11
+            dv2 = 0 if resto < 2 else 11 - resto
+            
+            # Verifica se os dígitos verificadores estão corretos
+            return cnpj[-2:] == f"{dv1}{dv2}"
+            
+        except Exception as e:
+            logging.error(f"Erro na validação CNPJ: {e}")
             return False
-        
-        # Verifica se todos os dígitos são iguais
-        if cnpj == cnpj[0] * 14:
-            return False
-        
-        # Cálculo do primeiro dígito verificador
-        weights1 = [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
-        sum1 = sum(int(cnpj[i]) * weights1[i] for i in range(12))
-        digit1 = 11 - (sum1 % 11)
-        if digit1 >= 10:
-            digit1 = 0
-        
-        # Cálculo do segundo dígito verificador
-        weights2 = [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
-        sum2 = sum(int(cnpj[i]) * weights2[i] for i in range(13))
-        digit2 = 11 - (sum2 % 11)
-        if digit2 >= 10:
-            digit2 = 0
-        
-        return int(cnpj[12]) == digit1 and int(cnpj[13]) == digit2
     
     def _validar_cpf(self, cpf: str) -> bool:
         """Valida CPF com dígitos verificadores"""

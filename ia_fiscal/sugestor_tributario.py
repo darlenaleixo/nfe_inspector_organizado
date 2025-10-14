@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from collections import defaultdict
 import unicodedata
 from datetime import datetime
+import logging
+
 
 @dataclass
 class SugestaoTributaria:

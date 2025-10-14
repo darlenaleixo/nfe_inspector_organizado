@@ -1,0 +1,25 @@
+# requirements.txt - Versão completa com todas as dependências
+# Dependências existentes do projeto
+lxml>=4.6.0
+requests>=2.25.0
+certifi>=2021.5.25
+urllib3>=1.26.0
+pandas>=1.3.0
+openpyxl>=3.0.0
+reportlab>=3.6.0
+
+# Novas dependências para download
+zeep>=4.0.0
+cryptography>=3.0.0
+click>=8.0.0
+tabulate>=0.9.0
+python-dotenv>=0.19.0
+
+# Dependências opcionais
+schedule>=1.1.0
+sqlalchemy>=1.4.0
+
+# Para desenvolvimento
+pytest>=6.2.0
+black>=21.0.0
+flake8>=3.9.0
