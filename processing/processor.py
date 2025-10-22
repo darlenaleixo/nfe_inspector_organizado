@@ -34,6 +34,8 @@ class NFeProcessorBI:
         self.pasta_xml = pasta_xml
         self.pasta_saida = pasta_saida
         
+
+        
         # Inicializa banco de dados
         self.db_manager = DatabaseManager(db_path)
         
@@ -49,6 +51,8 @@ class NFeProcessorBI:
         else:
             self.calculadora_rt = None
         
+        self.dados_processados = []
+
         # Estatísticas do processamento
         self.estatisticas = {
             "arquivos_processados": 0,
@@ -78,6 +82,9 @@ class NFeProcessorBI:
             return self.estatisticas
         
         logging.info(f"📄 Encontrados {len(arquivos_xml)} arquivo(s) XML")
+
+        # Lista para guardar os dados processados
+        dados_temp = []  # ← ADICIONE ESTA LINHA
         
         # Processa cada arquivo
         for i, arquivo in enumerate(arquivos_xml, 1):
@@ -89,6 +96,7 @@ class NFeProcessorBI:
                 resultado = self._processar_arquivo_xml(caminho_arquivo)
                 
                 if resultado:
+                    dados_temp.append(resultado)
                     self.estatisticas["arquivos_processados"] += 1
                     self.estatisticas["nfes_inseridas"] += 1
                     logging.info(f"✅ {arquivo} processado com sucesso")
@@ -107,9 +115,11 @@ class NFeProcessorBI:
         
         logging.info(f"🎯 Processamento concluído em {self.estatisticas['tempo_processamento']:.1f}s")
         logging.info(f"📊 Estatísticas: {self.estatisticas}")
+
+        self.dados_processados = dados_temp
         
         return self.estatisticas
-    
+        
     def _processar_arquivo_xml(self, caminho_arquivo: str) -> bool:
         """Processa um arquivo XML individual"""
         

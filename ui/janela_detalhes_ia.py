@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # ui/janela_detalhes_ia.py
 
 import tkinter as tk
@@ -480,7 +479,6 @@ Para dúvidas ou esclarecimentos, entre em contato com o suporte técnico.
 def abrir_janela_detalhes_ia(parent, dados_nfe, resultado_analise):
     """Abre janela com detalhes da análise IA"""
     JanelaDetalhesIA(parent, dados_nfe, resultado_analise)
-=======
 # ui/janela_detalhes_ia.py
 
 import tkinter as tk
@@ -962,4 +960,4 @@ Para dúvidas ou esclarecimentos, entre em contato com o suporte técnico.
 def abrir_janela_detalhes_ia(parent, dados_nfe, resultado_analise):
     """Abre janela com detalhes da análise IA"""
     JanelaDetalhesIA(parent, dados_nfe, resultado_analise)
->>>>>>> 62fc89a629eb88be57523fc82f480d488337ac8e
+

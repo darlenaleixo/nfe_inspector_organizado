@@ -55,7 +55,7 @@ class JanelaProcessamento:
         """Cria a janela de processamento"""
         self.window = tk.Toplevel(self.parent)
         self.window.title("🚀 Processamento de XMLs NFe")
-        self.window.geometry("800x950")
+        self.window.geometry("800x600")
         self.window.configure(bg=self.cores['fundo_principal'])
         
         # Centralizar janela
